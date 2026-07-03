@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, ensureSeed } from './db/db'
 import { useApp } from './store/app'
@@ -66,11 +66,23 @@ function PrivacySignal() {
 
 export default function App() {
   const { theme, toggleTheme, initTheme } = useApp()
+  const location = useLocation()
+  const isImmersiveHome = location.pathname === '/'
 
   useEffect(() => {
     ensureSeed()
     initTheme()
   }, [initTheme])
+
+  if (isImmersiveHome) {
+    return (
+      <div className="app-shell app-shell-immersive">
+        <main className="immersive-main">
+          <Dashboard />
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="app-shell">

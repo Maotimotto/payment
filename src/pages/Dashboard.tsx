@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
@@ -16,28 +16,36 @@ import { useApp } from '../store/app'
 import { formatDate, formatMoney, monthKey, monthLabel, monthRange } from '../lib/format'
 import { rootTagId, tagFullName } from '../lib/tags'
 import { detectDuplicates, detectRefundOffsets } from '../lib/dedup'
-import { FlowMotion } from '../components/FlowMotion'
+import { BrandLockup } from '../components/BrandMark'
 import type { Transaction } from '../types'
 
-function CashFigure({
-  label,
-  value,
-  tone,
-  detail,
-}: {
-  label: string
-  value: string
-  tone?: 'income' | 'expense' | 'neutral'
-  detail?: string
-}) {
-  const toneClass = tone === 'income' ? 'amount-income' : tone === 'expense' ? 'amount-expense' : ''
-  return (
-    <div className="cash-figure">
-      <div className="eyebrow">{label}</div>
-      <div className={`metric-value mt-3 ${toneClass}`}>{value}</div>
-      {detail && <div className="mt-2 text-xs leading-5 text-[var(--muted)]">{detail}</div>}
-    </div>
-  )
+const LIFE_VIDEOS = [
+  { src: '/video/sea-city.mov', label: 'Sea city' },
+  { src: '/video/city-dusk.mov', label: 'City dusk' },
+  { src: '/video/mountain-drive.mov', label: 'Mountain road' },
+  { src: '/video/rural-aerial.mov', label: 'Rural aerial' },
+  { src: '/video/wild-aerial.mov', label: 'Wild horizon' },
+] as const
+
+const HERO_VIDEO_FADE_MS = 1400
+const HERO_VIDEO_MIN_MS = 1800
+const HERO_VIDEO_MAX_MS = 7600
+const HERO_VIDEO_PROMOTION_OFFSET_SECONDS = HERO_VIDEO_FADE_MS / 1000
+
+type DashboardStats = {
+  income: number
+  expense: number
+  balance: number
+  mom: number
+  categories: { name: string; value: number }[]
+  trend: { month: string; 支出: number; 收入: number }[]
+  top: Transaction[]
+  uncategorized: number
+  duplicateCandidates: number
+  refundCandidates: number
+  excluded: number
+  curCount: number
+  monthName: string
 }
 
 function Panel({ title, eyebrow, children }: { title: string; eyebrow?: string; children: React.ReactNode }) {
@@ -65,7 +73,7 @@ export default function Dashboard() {
     [ledgerId],
   )
 
-  const stats = useMemo(() => {
+  const stats = useMemo<DashboardStats | null>(() => {
     if (!allTx || !tags) return null
     const counted = allTx.filter((t) => t.countInStats && t.dedupStatus !== 'merged')
     const now = new Date()
@@ -136,108 +144,263 @@ export default function Dashboard() {
 
   if (!stats || !tags) return <div className="text-[var(--muted)]">加载中…</div>
 
-  if (allTx && allTx.length === 0) {
-    return (
-      <div className="grid min-h-[72vh] place-items-center">
-        <div className="surface empty-ledger-grid w-full max-w-5xl overflow-hidden p-5 md:p-8">
-          <FlowMotion variant="empty" />
-          <div className="empty-ledger-copy">
-            <div className="eyebrow">汐账 · Tide ledger</div>
-            <h1 className="page-title mt-4">让分散流水归潮。</h1>
-            <p className="page-lede mt-5">
-              先导入微信、支付宝、银行 CSV/PDF，或者手动录入一笔。汐账会把账单变成状态反馈：看见工作回报、消耗节奏和少量待复盘事项。
-            </p>
-            <Link to="/import" className="btn btn-primary mt-7">
-              进入导入
+  const hasEntries = (allTx?.length ?? 0) > 0
+  const queueCount = stats.uncategorized + stats.duplicateCandidates + stats.refundCandidates
+
+  return (
+    <div className="immersive-dashboard">
+      <LifeHero stats={stats} hasEntries={hasEntries} queueCount={queueCount} />
+
+      <main id="life-tools" className="tool-deck">
+        <div className="tool-deck-inner">
+          <section className="tool-deck-heading">
+            <div>
+              <div className="eyebrow">Tools after perspective</div>
+              <h2 className="display">只留下能帮助行动的部分。</h2>
+              <p>
+                汐账不要求你围着账单生活。它把多源记录收拢成少量反馈：回报、消耗、待校准，然后让你继续把注意力放回成长本身。
+              </p>
+            </div>
+            <div className="tool-deck-actions" aria-label="常用功能">
+              <Link to="/import" className="btn btn-primary">
+                多源导入
+              </Link>
+              <Link to="/transactions" className="btn btn-ghost">
+                流水校准
+              </Link>
+            </div>
+          </section>
+
+          <StateReflection
+            balance={stats.balance}
+            income={stats.income}
+            expense={stats.expense}
+            topCategory={stats.categories[0]?.name}
+            queueCount={queueCount}
+          />
+
+          {hasEntries ? (
+            <>
+              <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_390px]">
+                <Panel title="近 6 月潮汐" eyebrow="Trend">
+                  <div className="chart-shell h-[340px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={stats.trend} margin={{ top: 12, right: 18, bottom: 0, left: 0 }}>
+                        <CartesianGrid strokeDasharray="1 8" vertical={false} />
+                        <XAxis dataKey="month" tickLine={false} axisLine={false} />
+                        <YAxis tickLine={false} axisLine={false} width={58} />
+                        <Tooltip formatter={(v) => `¥ ${formatMoney(Number(v))}`} />
+                        <Legend />
+                        <Line type="monotone" dataKey="支出" stroke="var(--coral)" strokeWidth={3} dot={false} />
+                        <Line type="monotone" dataKey="收入" stroke="var(--jade)" strokeWidth={3} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Panel>
+
+                <Panel title="支出去向" eyebrow="This month">
+                  <CategoryBars items={stats.categories} />
+                </Panel>
+              </section>
+
+              <Panel title="本月大额 / 异常" eyebrow="Top spend">
+                {stats.top.length === 0 ? (
+                  <div className="rounded-[8px] border border-dashed border-[var(--line)] p-8 text-center text-sm text-[var(--muted)]">本月暂无支出</div>
+                ) : (
+                  <div className="ledger-list">
+                    {stats.top.map((t, index) => (
+                      <div key={t.id} className="ledger-row">
+                        <span className="display w-8 text-xl text-[var(--brass)]">{String(index + 1).padStart(2, '0')}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold">{t.merchant}</div>
+                          <div className="mt-1 text-xs text-[var(--muted)]">{formatDate(t.occurredAt)}</div>
+                        </div>
+                        <div className="font-[var(--font-num)] text-lg amount-expense">¥ {formatMoney(t.amount)}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Panel>
+            </>
+          ) : (
+            <section className="quiet-start">
+              <div>
+                <div className="eyebrow">Small tool, wide life</div>
+                <h2 className="display mt-2 text-3xl">先不用把账单当成主线。</h2>
+                <p className="page-lede mt-4">
+                  导入一段记录即可。汐账只负责把回报、消耗和待复盘事项放到你眼前，剩下的时间应该还给真正重要的事。
+                </p>
+              </div>
+              <Link to="/import" className="btn btn-ghost">
+                轻量导入
+                <span aria-hidden="true">→</span>
+              </Link>
+            </section>
+          )}
+        </div>
+      </main>
+    </div>
+  )
+}
+
+function LifeHero({
+  stats,
+  hasEntries,
+  queueCount,
+}: {
+  stats: DashboardStats
+  hasEntries: boolean
+  queueCount: number
+}) {
+  const balanceLabel = hasEntries ? `¥ ${formatMoney(stats.balance)}` : '等待第一段反馈'
+  const nextStep = !hasEntries
+    ? '导入一段账单'
+    : queueCount > 0
+      ? `校准 ${queueCount} 项`
+      : '看见状态，然后出发'
+  const [activeVideo, setActiveVideo] = useState(0)
+  const [incomingVideo, setIncomingVideo] = useState<number | null>(null)
+  const [activeStartAt, setActiveStartAt] = useState(0)
+  const transitionTimer = useRef<number | null>(null)
+  const settleTimer = useRef<number | null>(null)
+  const transitioning = useRef(false)
+  const currentVideo = LIFE_VIDEOS[activeVideo] ?? LIFE_VIDEOS[0]
+  const nextVideo = incomingVideo == null ? null : LIFE_VIDEOS[incomingVideo]
+
+  const clearVideoTimers = useCallback(() => {
+    if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
+    if (settleTimer.current != null) window.clearTimeout(settleTimer.current)
+    transitionTimer.current = null
+    settleTimer.current = null
+  }, [])
+
+  const beginVideoTransition = useCallback(() => {
+    if (transitioning.current) return
+    transitioning.current = true
+    if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
+    transitionTimer.current = null
+
+    const next = (activeVideo + 1) % LIFE_VIDEOS.length
+    setIncomingVideo(next)
+    settleTimer.current = window.setTimeout(() => {
+      setActiveStartAt(HERO_VIDEO_PROMOTION_OFFSET_SECONDS)
+      setActiveVideo(next)
+      setIncomingVideo(null)
+      settleTimer.current = null
+      transitioning.current = false
+    }, HERO_VIDEO_FADE_MS)
+  }, [activeVideo])
+
+  const scheduleVideoAdvance = useCallback(
+    (video: HTMLVideoElement) => {
+      if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
+      const durationMs = Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : HERO_VIDEO_MAX_MS
+      const remainingMs = Math.max(0, durationMs - video.currentTime * 1000)
+      const delay = Math.max(HERO_VIDEO_MIN_MS, Math.min(remainingMs - HERO_VIDEO_FADE_MS, HERO_VIDEO_MAX_MS))
+      transitionTimer.current = window.setTimeout(beginVideoTransition, delay)
+    },
+    [beginVideoTransition],
+  )
+
+  const handleActiveLoadedMetadata = useCallback(
+    (event: SyntheticEvent<HTMLVideoElement>) => {
+      const video = event.currentTarget
+      if (activeStartAt > 0 && Number.isFinite(video.duration)) {
+        video.currentTime = Math.min(activeStartAt, Math.max(0, video.duration - 0.2))
+        setActiveStartAt(0)
+      }
+      scheduleVideoAdvance(video)
+    },
+    [activeStartAt, scheduleVideoAdvance],
+  )
+
+  useEffect(() => {
+    return () => {
+      clearVideoTimers()
+    }
+  }, [clearVideoTimers])
+
+  return (
+    <header className="life-hero">
+      <div className="life-video-stage" aria-hidden="true">
+        <video
+          key={currentVideo.src}
+          className="life-hero-video life-video-active"
+          src={currentVideo.src}
+          autoPlay
+          muted
+          playsInline
+          preload="auto"
+          onLoadedMetadata={handleActiveLoadedMetadata}
+          onEnded={beginVideoTransition}
+          onError={beginVideoTransition}
+        />
+        {nextVideo && (
+          <video key={nextVideo.src} className="life-hero-video life-video-incoming" src={nextVideo.src} autoPlay muted playsInline preload="auto" />
+        )}
+      </div>
+      <div className="life-hero-shade" />
+      <div className="life-hero-grain" />
+
+      <nav className="life-hero-topbar" aria-label="首页导航">
+        <BrandLockup compact className="brand-lockup-on-video" />
+        <div className="life-hero-nav">
+          <a href="#life-tools">功能</a>
+          <Link to="/import">导入</Link>
+          <Link to="/transactions">流水</Link>
+          <Link to="/settings">设置</Link>
+        </div>
+      </nav>
+
+      <div className="life-hero-content">
+        <div className="life-hero-copy">
+          <div className="life-hero-meta">
+            <span>Life horizon · {stats.monthName}</span>
+            <span>{currentVideo.label}</span>
+            <span>
+              {String(activeVideo + 1).padStart(2, '0')} / {String(LIFE_VIDEOS.length).padStart(2, '0')}
+            </span>
+          </div>
+          <h1 className="life-title display">人生不是账本。</h1>
+          <p>
+            账单只是回声。汐账把工作回报、能量消耗和少量待复盘事项放进同一片视野，让你确认状态、看见方向，然后继续把人生过大一点。
+          </p>
+          <div className="mt-7 flex flex-wrap gap-3">
+            <Link to="/import" className="btn btn-primary">
+              {hasEntries ? '补充记录' : '开始导入'}
               <span aria-hidden="true">→</span>
+            </Link>
+            <Link to="/transactions" className="btn btn-on-video">
+              流水校准
             </Link>
           </div>
         </div>
-      </div>
-    )
-  }
 
-  return (
-    <div className="space-y-7">
-      <header className="dashboard-hero">
-        <div className="dashboard-hero-main">
-          <div className="eyebrow">Monthly tide · {stats.monthName}</div>
-          <h1 className="page-title mt-3">本月潮位</h1>
-          <div className={`tide-balance mt-7 ${stats.balance >= 0 ? 'amount-income' : 'amount-expense'}`}>
-            ¥ {formatMoney(stats.balance)}
+        <aside className="life-status-panel" aria-label="当前状态反馈">
+          <div className="life-status-row life-status-primary">
+            <span>当前反馈</span>
+            <strong className={hasEntries ? (stats.balance >= 0 ? 'amount-income' : 'amount-expense') : ''}>{balanceLabel}</strong>
           </div>
-          <p className="page-lede mt-4">
-            这不是生活的成绩单，只是一面安静的状态镜。看见本月工作回报与消耗节奏，再处理右侧少量队列即可。
-          </p>
-          <div className="mt-8 grid gap-3 md:grid-cols-3">
-            <CashFigure label="收入" value={`¥ ${formatMoney(stats.income)}`} tone="income" detail={`${stats.curCount} 笔本月记录`} />
-            <CashFigure label="支出" value={`¥ ${formatMoney(stats.expense)}`} tone="expense" detail={`${stats.mom >= 0 ? '+' : ''}${stats.mom.toFixed(1)}% 较上月支出`} />
-            <CashFigure label="净流入" value={`¥ ${formatMoney(stats.balance)}`} detail={stats.balance >= 0 ? '现金流为正。' : '支出超过收入。'} />
+          <div className="life-status-row">
+            <span>工作回报</span>
+            <strong>{hasEntries ? `¥ ${formatMoney(stats.income)}` : '未导入'}</strong>
           </div>
-        </div>
-        <aside className="review-panel">
-          <div>
-            <div className="eyebrow">Clean queue</div>
-            <h2 className="display mt-2 text-2xl">待校准</h2>
+          <div className="life-status-row">
+            <span>能量消耗</span>
+            <strong>{hasEntries ? `¥ ${formatMoney(stats.expense)}` : '未导入'}</strong>
           </div>
-          <div className="mt-5 grid gap-3">
-            <QueueRow label="未分类" value={stats.uncategorized} to="/transactions" />
-            <QueueRow label="疑似重复" value={stats.duplicateCandidates} to="/transactions" />
-            <QueueRow label="退款抵消" value={stats.refundCandidates} to="/transactions" />
-            <QueueRow label="不计统计复核" value={stats.excluded} to="/transactions" />
+          <div className="life-status-row">
+            <span>下一步</span>
+            <strong>{nextStep}</strong>
           </div>
         </aside>
-      </header>
+      </div>
 
-      <StateReflection
-        balance={stats.balance}
-        income={stats.income}
-        expense={stats.expense}
-        topCategory={stats.categories[0]?.name}
-        queueCount={stats.uncategorized + stats.duplicateCandidates + stats.refundCandidates}
-      />
-
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_390px]">
-        <Panel title="近 6 月潮汐" eyebrow="Trend">
-          <div className="chart-shell h-[340px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={stats.trend} margin={{ top: 12, right: 18, bottom: 0, left: 0 }}>
-                <CartesianGrid strokeDasharray="1 8" vertical={false} />
-                <XAxis dataKey="month" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} width={58} />
-                <Tooltip formatter={(v) => `¥ ${formatMoney(Number(v))}`} />
-                <Legend />
-                <Line type="monotone" dataKey="支出" stroke="var(--coral)" strokeWidth={3} dot={false} />
-                <Line type="monotone" dataKey="收入" stroke="var(--jade)" strokeWidth={3} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Panel>
-
-        <Panel title="支出去向" eyebrow="This month">
-          <CategoryBars items={stats.categories} />
-        </Panel>
-      </section>
-
-      <Panel title="本月大额 / 异常" eyebrow="Top spend">
-        {stats.top.length === 0 ? (
-          <div className="rounded-[8px] border border-dashed border-[var(--line)] p-8 text-center text-sm text-[var(--muted)]">本月暂无支出</div>
-        ) : (
-          <div className="ledger-list">
-            {stats.top.map((t, index) => (
-              <div key={t.id} className="ledger-row">
-                <span className="display w-8 text-xl text-[var(--brass)]">{String(index + 1).padStart(2, '0')}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">{t.merchant}</div>
-                  <div className="mt-1 text-xs text-[var(--muted)]">{formatDate(t.occurredAt)}</div>
-                </div>
-                <div className="font-[var(--font-num)] text-lg amount-expense">¥ {formatMoney(t.amount)}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Panel>
-    </div>
+      <a className="scroll-cue" href="#life-tools" aria-label="向下展开功能">
+        <span>向下展开功能</span>
+        <span aria-hidden="true">↓</span>
+      </a>
+    </header>
   )
 }
 
@@ -297,14 +460,5 @@ function CategoryBars({ items }: { items: { name: string; value: number }[] }) {
         </div>
       ))}
     </div>
-  )
-}
-
-function QueueRow({ label, value, to }: { label: string; value: number; to: string }) {
-  return (
-    <Link to={to} className={`queue-row ${value === 0 ? 'queue-row-quiet' : ''}`}>
-      <span className="text-sm text-[var(--muted)]">{label}</span>
-      <span className="font-[var(--font-num)] text-lg">{value}</span>
-    </Link>
   )
 }
