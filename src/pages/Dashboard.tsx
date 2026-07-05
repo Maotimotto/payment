@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type SyntheticEvent } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, getLLMConfig, saveLLMConfig } from '../db/db'
 import { useApp } from '../store/app'
@@ -14,7 +14,7 @@ import { detectDuplicates, detectRefundOffsets, type DuplicatePair, type RefundP
 import { formatDate, formatMoney, monthKey, monthLabel, monthRange } from '../lib/format'
 import { ingestDrafts, updateTransactionTag } from '../lib/ingest'
 import { parseCsvWithLLM, parseImage, testConnection } from '../lib/llm'
-import { rootTagId, tagFullName } from '../lib/tags'
+import { buildTagTree, rootTagId, tagFullName, type TagNode } from '../lib/tags'
 import { BrandLockup } from '../components/BrandMark'
 import {
   LIFE_CHAPTER_MEDIA,
@@ -72,6 +72,10 @@ export default function Dashboard() {
       setLedgerId(ledgers[0].id!)
     }
   }, [ledgers, ledgerId, setLedgerId])
+
+  useEffect(() => {
+    document.title = '汐账 · Dashboard'
+  }, [])
 
   const stats = useMemo<DashboardStats | null>(() => {
     if (!allTx || !tags) return null
@@ -155,11 +159,10 @@ export default function Dashboard() {
     <div className="immersive-dashboard">
       <LifeHero stats={stats} hasEntries={hasEntries} queueCount={queueCount} />
 
-      <main id="life-tools" className="scroll-story">
-        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[0]} />
-
+      <main id="dashboard" className="scroll-story">
         <RevealSection
           id="state-flow"
+          chapter={LIFE_CHAPTER_MEDIA[0]}
           eyebrow="State feedback"
           title="先看状态，再处理账单。"
           copy="账单只负责把工作回报、能量消耗和待复盘事项摆到一条长视线里。你看见它，校准它，然后离开它。"
@@ -167,10 +170,9 @@ export default function Dashboard() {
           <StateFlow stats={stats} hasEntries={hasEntries} />
         </RevealSection>
 
-        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[1]} />
-
         <RevealSection
           id="import-flow"
+          chapter={LIFE_CHAPTER_MEDIA[1]}
           eyebrow="Bring records in"
           title="多源导入不离开这条视线。"
           copy="微信、支付宝、银行 CSV/PDF、截图和手动录入都在这里。能用本地规则解决的就留在本地，需要大模型时再打开。"
@@ -178,10 +180,9 @@ export default function Dashboard() {
           <ImportFlow ledgerId={ledgerId} llmReady={llmReady} />
         </RevealSection>
 
-        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[2]} />
-
         <RevealSection
           id="review-flow"
+          chapter={LIFE_CHAPTER_MEDIA[2]}
           eyebrow="Clean only what matters"
           title="复核队列只出现真正影响判断的部分。"
           copy="未分类、疑似重复、退款抵消和不计统计项被放在同一个复核段落。处理完，就把注意力还给工作和生活。"
@@ -189,10 +190,9 @@ export default function Dashboard() {
           <ReviewFlow stats={stats} transactions={allTx} />
         </RevealSection>
 
-        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[3]} />
-
         <RevealSection
           id="ledger-flow"
+          chapter={LIFE_CHAPTER_MEDIA[3]}
           eyebrow="Ledger workbench"
           title="流水校准留在首页里完成。"
           copy="筛选、改标签、删除、导出、AI 打标签都在这里。它是工具，不再是另一个需要切换进去的旧页面。"
@@ -205,10 +205,19 @@ export default function Dashboard() {
           />
         </RevealSection>
 
-        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[4]} />
+        <RevealSection
+          id="tags-flow"
+          chapter={LIFE_CHAPTER_MEDIA[4]}
+          eyebrow="Taxonomy"
+          title="标签口径也留在这条长页里。"
+          copy="统计口径只需要足够清楚，不需要过度精细。把转账、投资、还款这些资金搬运单独收好，避免它们掩盖真实状态。"
+        >
+          <TagFlow tags={tags} />
+        </RevealSection>
 
         <RevealSection
           id="settings-flow"
+          chapter={LIFE_CHAPTER_MEDIA[5]}
           eyebrow="Local controls"
           title="只打开你需要的能力。"
           copy="大模型、账本、主题和数据管理被收进最后一段。默认仍然是纯本地账本，敏感配置只保存在当前浏览器。"
@@ -222,14 +231,26 @@ export default function Dashboard() {
             toggleTheme={toggleTheme}
           />
         </RevealSection>
-
-        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[5]} />
       </main>
     </div>
   )
 }
 
-function LifeInterlude({ chapter }: { chapter: LifeChapterMedia }) {
+function RevealSection({
+  id,
+  chapter,
+  eyebrow,
+  title,
+  copy,
+  children,
+}: {
+  id: string
+  chapter: LifeChapterMedia
+  eyebrow: string
+  title: string
+  copy: string
+  children: ReactNode
+}) {
   const ref = useRef<HTMLElement | null>(null)
   const [visible, setVisible] = useState(false)
   const [hydrated, setHydrated] = useState(false)
@@ -246,7 +267,7 @@ function LifeInterlude({ chapter }: { chapter: LifeChapterMedia }) {
         setHydrated(true)
         window.requestAnimationFrame(() => setVisible(true))
       },
-      { threshold: 0.12, rootMargin: '0px 0px 0px 0px' },
+      { threshold: 0.08, rootMargin: '35% 0px -8% 0px' },
     )
     observer.observe(el)
     return () => observer.disconnect()
@@ -264,7 +285,7 @@ function LifeInterlude({ chapter }: { chapter: LifeChapterMedia }) {
     }
   }, [])
 
-  const handleInterludeLoadedMetadata = useCallback((event: SyntheticEvent<HTMLVideoElement>) => {
+  const handleSectionLoadedMetadata = useCallback((event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget
     if (!Number.isFinite(video.duration) || video.duration <= 1) return
     video.currentTime = Math.min(HERO_VIDEO_PROMOTION_OFFSET_SECONDS, Math.max(0, video.duration - 0.2))
@@ -272,76 +293,38 @@ function LifeInterlude({ chapter }: { chapter: LifeChapterMedia }) {
 
   return (
     <section
+      id={id}
       ref={ref}
-      className={`life-interlude life-interlude-${chapter.align ?? 'left'} ${visible ? 'is-visible' : ''}`}
-      aria-label={chapter.alt}
+      className={`story-section story-section-cinematic story-section-${chapter.align ?? 'left'} ${visible ? 'is-visible' : ''} ${hydrated ? 'is-hydrated' : ''}`}
     >
-      <div className="life-interlude-media" aria-hidden="true">
+      <div className="story-section-media" aria-hidden="true">
         {shouldPlayVideo && videoSrc && (
           <video
             key={`${chapter.id}-${videoSrc}`}
-            className="life-interlude-video"
+            className="story-section-video"
             src={videoSrc}
             autoPlay
             muted
             playsInline
             preload="none"
-            onLoadedMetadata={handleInterludeLoadedMetadata}
+            onLoadedMetadata={handleSectionLoadedMetadata}
             onEnded={(event) => event.currentTarget.pause()}
           />
         )}
       </div>
-      <div className="life-interlude-shade" />
-      <div className="life-interlude-copy">
-        <div className="eyebrow">{chapter.eyebrow}</div>
-        <h2 className="display">{chapter.title}</h2>
-        <p>{chapter.copy}</p>
-      </div>
-    </section>
-  )
-}
-
-function RevealSection({
-  id,
-  eyebrow,
-  title,
-  copy,
-  children,
-}: {
-  id: string
-  eyebrow: string
-  title: string
-  copy: string
-  children: ReactNode
-}) {
-  const ref = useRef<HTMLElement | null>(null)
-  const [visible, setVisible] = useState(false)
-  const [hydrated, setHydrated] = useState(false)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry.isIntersecting) return
-        setHydrated(true)
-        window.requestAnimationFrame(() => setVisible(true))
-      },
-      { threshold: 0.08, rootMargin: '35% 0px -8% 0px' },
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
-
-  return (
-    <section id={id} ref={ref} className={`story-section ${visible ? 'is-visible' : ''} ${hydrated ? 'is-hydrated' : ''}`}>
-      <div className="story-copy">
-        <div className="eyebrow">{eyebrow}</div>
-        <h2 className="display">{title}</h2>
-        <p>{copy}</p>
-      </div>
-      <div className="story-body">
-        {hydrated ? children : <div className="story-placeholder" aria-hidden="true" />}
+      <div className="story-section-shade" />
+      <div className="story-section-grid">
+        <div className="story-copy">
+          <div className="story-section-meta">
+            <span>{chapter.label}</span>
+            <span>{eyebrow}</span>
+          </div>
+          <h2 className="display">{title}</h2>
+          <p>{copy}</p>
+        </div>
+        <div className="story-body">
+          {hydrated ? children : <div className="story-placeholder" aria-hidden="true" />}
+        </div>
       </div>
     </section>
   )
@@ -503,6 +486,7 @@ function LifeHero({
           <a href="#import-flow">导入</a>
           <a href="#review-flow">复核</a>
           <a href="#ledger-flow">流水</a>
+          <a href="#tags-flow">标签</a>
           <a href="#settings-flow">控制</a>
         </div>
       </nav>
@@ -510,7 +494,7 @@ function LifeHero({
       <div className="life-hero-content">
         <div className="life-hero-copy">
           <div className="life-hero-meta">
-            <span>Life horizon · {stats.monthName}</span>
+            <span>Dashboard · {stats.monthName}</span>
             <span>{currentVideo.label}</span>
             <span>
               {String(activeVideo + 1).padStart(2, '0')} / {String(LIFE_HERO_MEDIA.length).padStart(2, '0')}
@@ -1229,6 +1213,121 @@ function LedgerRow({
       <td className={t.direction === 'income' ? 'amount-income' : 'amount-expense'}>{t.direction === 'income' ? '+' : '-'} {formatMoney(t.amount)}</td>
       <td><button onClick={del} className="mini-action">删</button></td>
     </tr>
+  )
+}
+
+function TagFlow({ tags }: { tags: Tag[] }) {
+  const [newRoot, setNewRoot] = useState('')
+  const tree = useMemo(() => buildTagTree(tags), [tags])
+
+  async function addRoot() {
+    const name = newRoot.trim()
+    if (!name) return
+    await db.tags.add({ name, parentId: null, preset: false, special: null })
+    setNewRoot('')
+  }
+
+  return (
+    <div className="tag-flow">
+      <div className="tag-compose">
+        <input value={newRoot} onChange={(e) => setNewRoot(e.target.value)} className="story-input" placeholder="新增一级标签" />
+        <button onClick={addRoot} className="story-action">添加一级标签</button>
+      </div>
+
+      <div className="tag-lines">
+        {tree.length === 0 ? (
+          <div className="empty-line">当前没有标签，先建立一组足够清楚的统计口径。</div>
+        ) : (
+          tree.map((node) => <TagBranch key={node.id} node={node} depth={0} />)
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TagBranch({ node, depth }: { node: TagNode; depth: number }) {
+  const [adding, setAdding] = useState(false)
+  const [childName, setChildName] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(node.name)
+
+  async function addChild() {
+    const next = childName.trim()
+    if (!next) return
+    await db.tags.add({ name: next, parentId: node.id!, preset: false, special: null })
+    setChildName('')
+    setAdding(false)
+  }
+
+  async function rename() {
+    const next = name.trim()
+    if (next) await db.tags.update(node.id!, { name: next })
+    setEditing(false)
+  }
+
+  async function remove() {
+    if (!confirm(`删除标签「${node.name}」？其子标签与相关账单将变为未分类。`)) return
+    const ids: number[] = []
+    const stack: TagNode[] = [node]
+    while (stack.length > 0) {
+      const current = stack.pop()!
+      if (current.id != null) ids.push(current.id)
+      stack.push(...current.children)
+    }
+    await db.transactions.where('tagId').anyOf(ids).modify({ tagId: null })
+    await db.tags.bulkDelete(ids)
+  }
+
+  return (
+    <div className="tag-branch" style={{ '--tag-depth': depth } as CSSProperties}>
+      <div className="tag-row">
+        <div className="tag-label">
+          <span className="naked-index">{String(depth + 1).padStart(2, '0')}</span>
+          {editing ? (
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={rename}
+              onKeyDown={(e) => e.key === 'Enter' && rename()}
+              autoFocus
+              className="story-input tag-inline-input"
+            />
+          ) : (
+            <span className="tag-name">
+              <strong>{node.name}</strong>
+              {node.special && <span className="tag-chip tag-chip-quiet">统计排除</span>}
+            </span>
+          )}
+        </div>
+        <div className="tag-actions">
+          <button onClick={() => setAdding((value) => !value)} className="story-action story-action-compact">子标签</button>
+          <button onClick={() => setEditing((value) => !value)} className="story-action story-action-muted story-action-compact">改名</button>
+          <button onClick={remove} className="story-action story-action-danger story-action-compact">删除</button>
+        </div>
+      </div>
+
+      {adding && (
+        <div className="tag-compose tag-compose-nested">
+          <input
+            value={childName}
+            onChange={(e) => setChildName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addChild()}
+            className="story-input"
+            placeholder="新增子标签"
+            autoFocus
+          />
+          <button onClick={addChild} className="story-action">添加子标签</button>
+        </div>
+      )}
+
+      {node.children.length > 0 && (
+        <div className="tag-children">
+          {node.children.map((child) => (
+            <TagBranch key={child.id} node={child} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 

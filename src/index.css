@@ -861,10 +861,8 @@ button:disabled {
   position: relative;
   z-index: 2;
   background:
-    linear-gradient(180deg, oklch(0.16 0.035 184) 0, var(--paper) 12rem),
-    linear-gradient(90deg, color-mix(in oklch, var(--line) 28%, transparent) 0 1px, transparent 1px 8rem),
-    var(--paper);
-  color: var(--ink);
+    linear-gradient(180deg, oklch(0.08 0.03 184) 0, oklch(0.08 0.03 184) 100%);
+  color: oklch(0.96 0.016 84);
   padding: 0 var(--story-pad) clamp(5rem, 9vw, 9rem);
 }
 
@@ -1009,15 +1007,11 @@ button:disabled {
 
 .story-section {
   position: relative;
-  display: grid;
-  min-height: 96svh;
-  max-width: 1480px;
-  margin: 0 auto;
-  grid-template-columns: minmax(16rem, 0.62fr) minmax(0, 1.38fr);
-  align-items: center;
-  gap: clamp(2.25rem, 6vw, 7rem);
-  border-top: 1px solid color-mix(in oklch, var(--line-strong) 54%, transparent);
-  padding: clamp(4.5rem, 9vh, 7rem) 0;
+  min-height: 118svh;
+  margin-inline: calc(var(--story-pad) * -1);
+  overflow: hidden;
+  padding: clamp(4.5rem, 9vh, 7rem) var(--story-pad);
+  isolation: isolate;
   opacity: 0;
   transform: translate3d(0, 2.8rem, 0);
   transition:
@@ -1026,7 +1020,7 @@ button:disabled {
 }
 
 .story-section:first-child {
-  border-top-color: transparent;
+  margin-top: clamp(2rem, 8vh, 6rem);
 }
 
 .story-section.is-visible {
@@ -1034,11 +1028,87 @@ button:disabled {
   transform: translate3d(0, 0, 0);
 }
 
+.story-section-cinematic {
+  --ink: oklch(0.965 0.014 84);
+  --ink-soft: oklch(0.9 0.018 84);
+  --muted: oklch(0.84 0.02 84 / 0.72);
+  --line: oklch(0.92 0.02 84 / 0.18);
+  --line-strong: oklch(0.94 0.02 84 / 0.28);
+  --surface: oklch(0.08 0.028 184 / 0.32);
+  --surface-solid: oklch(0.08 0.028 184 / 0.28);
+  --surface-raised: oklch(0.1 0.03 184 / 0.4);
+  --shadow-soft: 0 18px 50px oklch(0.02 0.015 184 / 0.22);
+}
+
+.story-section-media,
+.story-section-video,
+.story-section-shade {
+  position: absolute;
+  inset: 0;
+}
+
+.story-section-media {
+  z-index: 0;
+  background:
+    radial-gradient(circle at 72% 18%, oklch(0.68 0.09 178 / 0.18), transparent 34%),
+    oklch(0.07 0.028 184);
+}
+
+.story-section-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  filter: saturate(0.9) contrast(1.08) brightness(0.72);
+  transform: scale(1.05);
+  opacity: 0;
+  animation:
+    video-fade-in 1600ms var(--ease-out-quint) forwards,
+    interlude-drift 22s var(--ease-out-quart) forwards;
+}
+
+.story-section-shade {
+  z-index: 1;
+  background:
+    linear-gradient(90deg, oklch(0.05 0.025 184 / 0.88), oklch(0.06 0.025 184 / 0.44) 42%, oklch(0.06 0.02 184 / 0.28) 62%, oklch(0.05 0.02 184 / 0.7)),
+    linear-gradient(0deg, oklch(0.045 0.02 184 / 0.84), transparent 46%),
+    linear-gradient(180deg, oklch(0.035 0.018 184 / 0.52), transparent 30%);
+}
+
+.story-section-right .story-section-shade {
+  background:
+    linear-gradient(270deg, oklch(0.05 0.025 184 / 0.88), oklch(0.06 0.025 184 / 0.44) 42%, oklch(0.06 0.02 184 / 0.28) 62%, oklch(0.05 0.02 184 / 0.7)),
+    linear-gradient(0deg, oklch(0.045 0.02 184 / 0.84), transparent 46%),
+    linear-gradient(180deg, oklch(0.035 0.018 184 / 0.52), transparent 30%);
+}
+
+.story-section-grid {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  max-width: 1480px;
+  margin: 0 auto;
+  grid-template-columns: minmax(16rem, 0.62fr) minmax(0, 1.38fr);
+  align-items: start;
+  gap: clamp(2.25rem, 6vw, 7rem);
+}
+
 .story-copy {
   align-self: start;
   position: sticky;
   top: clamp(4.5rem, 10vh, 7rem);
   padding-top: 0.2rem;
+}
+
+.story-section-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1rem;
+  color: oklch(0.94 0.018 84 / 0.72);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 .story-copy h2 {
@@ -1059,6 +1129,9 @@ button:disabled {
 
 .story-body {
   min-width: 0;
+  position: relative;
+  z-index: 2;
+  padding-top: clamp(6rem, 18vh, 12rem);
   content-visibility: auto;
   contain-intrinsic-size: 48rem;
 }
@@ -1322,6 +1395,12 @@ button:disabled {
   border-bottom-color: color-mix(in oklch, var(--rose) 54%, var(--line));
 }
 
+.story-action-compact {
+  min-height: 2.15rem;
+  padding-block: 0.35rem;
+  font-size: 0.68rem;
+}
+
 .inline-notice,
 .inline-status {
   display: flex;
@@ -1569,12 +1648,99 @@ button:disabled {
   line-height: 1.75;
 }
 
+.tag-flow {
+  display: grid;
+  gap: clamp(1.2rem, 3vw, 2.2rem);
+}
+
+.tag-compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: clamp(0.85rem, 2vw, 1.35rem);
+}
+
+.tag-compose-nested {
+  margin-left: calc((var(--tag-depth, 0) + 1) * 2.4rem);
+  margin-top: 0.65rem;
+}
+
+.tag-lines,
+.tag-children {
+  display: grid;
+  gap: 0;
+}
+
+.tag-lines {
+  max-height: min(60vh, 36rem);
+  overflow: auto;
+  padding-right: 0.35rem;
+}
+
+.tag-children {
+  margin-left: 2.4rem;
+}
+
+.tag-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  border-bottom: 1px solid var(--line);
+  padding: 0.82rem 0;
+}
+
+.tag-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.tag-name {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--ink);
+}
+
+.tag-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
+.tag-inline-input {
+  min-height: 2.2rem;
+  max-width: 18rem;
+  padding-block: 0.4rem;
+}
+
+.tag-chip-quiet {
+  background: color-mix(in oklch, var(--brass) 13%, transparent);
+  color: var(--brass);
+}
+
 @media (max-width: 1120px) {
-  .story-section {
+  .story-section-grid {
     min-height: auto;
     grid-template-columns: 1fr;
     align-items: start;
     gap: clamp(2rem, 6vw, 3.5rem);
+  }
+
+  .story-section {
+    min-height: auto;
     padding-block: clamp(4rem, 10vh, 6rem);
   }
 
@@ -1619,6 +1785,8 @@ button:disabled {
   }
 
   .story-section {
+    margin-inline: calc(clamp(1.4rem, 5vw, 2rem) * -1);
+    padding-inline: clamp(1.4rem, 5vw, 2rem);
     padding-block: 4rem;
   }
 
