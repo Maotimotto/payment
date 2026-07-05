@@ -1,14 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
 import { db, getLLMConfig, saveLLMConfig } from '../db/db'
 import { useApp } from '../store/app'
 import { useAiTag } from '../store/aiTag'
@@ -20,22 +11,24 @@ import {
   type BuiltinPlatform,
 } from '../lib/csv'
 import { detectDuplicates, detectRefundOffsets, type DuplicatePair, type RefundPair } from '../lib/dedup'
-import { exportTransactionsToExcel } from '../lib/export'
 import { formatDate, formatMoney, monthKey, monthLabel, monthRange } from '../lib/format'
 import { ingestDrafts, updateTransactionTag } from '../lib/ingest'
 import { parseCsvWithLLM, parseImage, testConnection } from '../lib/llm'
-import { bocPdfToCsv, PdfPasswordError } from '../lib/pdf'
 import { rootTagId, tagFullName } from '../lib/tags'
 import { BrandLockup } from '../components/BrandMark'
+import {
+  LIFE_CHAPTER_MEDIA,
+  LIFE_HERO_MEDIA,
+  getBrowserConnection,
+  getMediaLoadingPolicy,
+  resolveLifeVideoSource,
+  shouldWarmNextAsset,
+  type LifeChapterMedia,
+  type MediaLoadingPolicy,
+} from '../lib/lifeMedia'
 import type { Direction, DraftTransaction, Ledger, LLMConfig, Tag, Transaction } from '../types'
 
-const LIFE_VIDEOS = [
-  { src: '/video/sea-city.mov', label: 'Sea city' },
-  { src: '/video/city-dusk.mov', label: 'City dusk' },
-  { src: '/video/mountain-drive.mov', label: 'Mountain road' },
-  { src: '/video/rural-aerial.mov', label: 'Rural aerial' },
-  { src: '/video/wild-aerial.mov', label: 'Wild horizon' },
-] as const
+const StateTrendChart = lazy(() => import('../components/StateTrendChart'))
 
 const HERO_VIDEO_FADE_MS = 1400
 const HERO_VIDEO_MIN_MS = 1800
@@ -163,6 +156,8 @@ export default function Dashboard() {
       <LifeHero stats={stats} hasEntries={hasEntries} queueCount={queueCount} />
 
       <main id="life-tools" className="scroll-story">
+        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[0]} />
+
         <RevealSection
           id="state-flow"
           eyebrow="State feedback"
@@ -171,6 +166,8 @@ export default function Dashboard() {
         >
           <StateFlow stats={stats} hasEntries={hasEntries} />
         </RevealSection>
+
+        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[1]} />
 
         <RevealSection
           id="import-flow"
@@ -181,6 +178,8 @@ export default function Dashboard() {
           <ImportFlow ledgerId={ledgerId} llmReady={llmReady} />
         </RevealSection>
 
+        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[2]} />
+
         <RevealSection
           id="review-flow"
           eyebrow="Clean only what matters"
@@ -189,6 +188,8 @@ export default function Dashboard() {
         >
           <ReviewFlow stats={stats} transactions={allTx} />
         </RevealSection>
+
+        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[3]} />
 
         <RevealSection
           id="ledger-flow"
@@ -203,6 +204,8 @@ export default function Dashboard() {
             llmReady={llmReady}
           />
         </RevealSection>
+
+        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[4]} />
 
         <RevealSection
           id="settings-flow"
@@ -219,8 +222,82 @@ export default function Dashboard() {
             toggleTheme={toggleTheme}
           />
         </RevealSection>
+
+        <LifeInterlude chapter={LIFE_CHAPTER_MEDIA[5]} />
       </main>
     </div>
+  )
+}
+
+function LifeInterlude({ chapter }: { chapter: LifeChapterMedia }) {
+  const ref = useRef<HTMLElement | null>(null)
+  const [visible, setVisible] = useState(false)
+  const [hydrated, setHydrated] = useState(false)
+  const [mediaPolicy, setMediaPolicy] = useState<MediaLoadingPolicy>(() => getMediaLoadingPolicy())
+  const videoSrc = hydrated ? resolveLifeVideoSource(chapter, mediaPolicy) : null
+  const shouldPlayVideo = Boolean(videoSrc) && mediaPolicy !== 'still'
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return
+        setHydrated(true)
+        window.requestAnimationFrame(() => setVisible(true))
+      },
+      { threshold: 0.12, rootMargin: '0px 0px 0px 0px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const updatePolicy = () => setMediaPolicy(getMediaLoadingPolicy())
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const connection = getBrowserConnection()
+    motionQuery.addEventListener('change', updatePolicy)
+    connection?.addEventListener?.('change', updatePolicy)
+    return () => {
+      motionQuery.removeEventListener('change', updatePolicy)
+      connection?.removeEventListener?.('change', updatePolicy)
+    }
+  }, [])
+
+  const handleInterludeLoadedMetadata = useCallback((event: SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget
+    if (!Number.isFinite(video.duration) || video.duration <= 1) return
+    video.currentTime = Math.min(HERO_VIDEO_PROMOTION_OFFSET_SECONDS, Math.max(0, video.duration - 0.2))
+  }, [])
+
+  return (
+    <section
+      ref={ref}
+      className={`life-interlude life-interlude-${chapter.align ?? 'left'} ${visible ? 'is-visible' : ''}`}
+      aria-label={chapter.alt}
+    >
+      <div className="life-interlude-media" aria-hidden="true">
+        {shouldPlayVideo && videoSrc && (
+          <video
+            key={`${chapter.id}-${videoSrc}`}
+            className="life-interlude-video"
+            src={videoSrc}
+            autoPlay
+            muted
+            playsInline
+            preload="none"
+            onLoadedMetadata={handleInterludeLoadedMetadata}
+            onEnded={(event) => event.currentTarget.pause()}
+          />
+        )}
+      </div>
+      <div className="life-interlude-shade" />
+      <div className="life-interlude-copy">
+        <div className="eyebrow">{chapter.eyebrow}</div>
+        <h2 className="display">{chapter.title}</h2>
+        <p>{chapter.copy}</p>
+      </div>
+    </section>
   )
 }
 
@@ -239,28 +316,33 @@ function RevealSection({
 }) {
   const ref = useRef<HTMLElement | null>(null)
   const [visible, setVisible] = useState(false)
+  const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) setVisible(true)
+        if (!entry.isIntersecting) return
+        setHydrated(true)
+        window.requestAnimationFrame(() => setVisible(true))
       },
-      { threshold: 0.14, rootMargin: '0px 0px -12% 0px' },
+      { threshold: 0.08, rootMargin: '35% 0px -8% 0px' },
     )
     observer.observe(el)
     return () => observer.disconnect()
   }, [])
 
   return (
-    <section id={id} ref={ref} className={`story-section ${visible ? 'is-visible' : ''}`}>
+    <section id={id} ref={ref} className={`story-section ${visible ? 'is-visible' : ''} ${hydrated ? 'is-hydrated' : ''}`}>
       <div className="story-copy">
         <div className="eyebrow">{eyebrow}</div>
         <h2 className="display">{title}</h2>
         <p>{copy}</p>
       </div>
-      <div className="story-body">{children}</div>
+      <div className="story-body">
+        {hydrated ? children : <div className="story-placeholder" aria-hidden="true" />}
+      </div>
     </section>
   )
 }
@@ -283,11 +365,21 @@ function LifeHero({
   const [activeVideo, setActiveVideo] = useState(0)
   const [incomingVideo, setIncomingVideo] = useState<number | null>(null)
   const [activeStartAt, setActiveStartAt] = useState(0)
+  const [activeVideoReady, setActiveVideoReady] = useState(false)
+  const [mediaPolicy, setMediaPolicy] = useState<MediaLoadingPolicy>(() => getMediaLoadingPolicy())
   const transitionTimer = useRef<number | null>(null)
   const settleTimer = useRef<number | null>(null)
   const transitioning = useRef(false)
-  const currentVideo = LIFE_VIDEOS[activeVideo] ?? LIFE_VIDEOS[0]
-  const nextVideo = incomingVideo == null ? null : LIFE_VIDEOS[incomingVideo]
+  const currentVideo = LIFE_HERO_MEDIA[activeVideo] ?? LIFE_HERO_MEDIA[0]
+  const nextVideo = incomingVideo == null ? null : LIFE_HERO_MEDIA[incomingVideo]
+  const currentVideoSrc = currentVideo ? resolveLifeVideoSource(currentVideo, mediaPolicy) : null
+  const nextVideoSrc = nextVideo ? resolveLifeVideoSource(nextVideo, mediaPolicy) : null
+  const shouldPlayVideo = Boolean(currentVideoSrc) && mediaPolicy !== 'still'
+  const prewarmIndex = shouldPlayVideo && shouldWarmNextAsset(mediaPolicy) && LIFE_HERO_MEDIA.length > 1
+    ? (activeVideo + 1) % LIFE_HERO_MEDIA.length
+    : null
+  const prewarmVideo = prewarmIndex == null || incomingVideo != null ? null : LIFE_HERO_MEDIA[prewarmIndex]
+  const prewarmVideoSrc = prewarmVideo ? resolveLifeVideoSource(prewarmVideo, mediaPolicy) : null
 
   const clearVideoTimers = useCallback(() => {
     if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
@@ -297,12 +389,13 @@ function LifeHero({
   }, [])
 
   const beginVideoTransition = useCallback(() => {
+    if (!shouldPlayVideo || LIFE_HERO_MEDIA.length < 2) return
     if (transitioning.current) return
     transitioning.current = true
     if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
     transitionTimer.current = null
 
-    const next = (activeVideo + 1) % LIFE_VIDEOS.length
+    const next = (activeVideo + 1) % LIFE_HERO_MEDIA.length
     setIncomingVideo(next)
     settleTimer.current = window.setTimeout(() => {
       setActiveStartAt(HERO_VIDEO_PROMOTION_OFFSET_SECONDS)
@@ -311,17 +404,18 @@ function LifeHero({
       settleTimer.current = null
       transitioning.current = false
     }, HERO_VIDEO_FADE_MS)
-  }, [activeVideo])
+  }, [activeVideo, shouldPlayVideo])
 
   const scheduleVideoAdvance = useCallback(
     (video: HTMLVideoElement) => {
+      if (!shouldPlayVideo) return
       if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
       const durationMs = Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : HERO_VIDEO_MAX_MS
       const remainingMs = Math.max(0, durationMs - video.currentTime * 1000)
       const delay = Math.max(HERO_VIDEO_MIN_MS, Math.min(remainingMs - HERO_VIDEO_FADE_MS, HERO_VIDEO_MAX_MS))
       transitionTimer.current = window.setTimeout(beginVideoTransition, delay)
     },
-    [beginVideoTransition],
+    [beginVideoTransition, shouldPlayVideo],
   )
 
   const handleActiveLoadedMetadata = useCallback(
@@ -342,23 +436,61 @@ function LifeHero({
     }
   }, [clearVideoTimers])
 
+  useEffect(() => {
+    const updatePolicy = () => setMediaPolicy(getMediaLoadingPolicy())
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const connection = getBrowserConnection()
+    motionQuery.addEventListener('change', updatePolicy)
+    connection?.addEventListener?.('change', updatePolicy)
+    return () => {
+      motionQuery.removeEventListener('change', updatePolicy)
+      connection?.removeEventListener?.('change', updatePolicy)
+    }
+  }, [])
+
+  useEffect(() => {
+    setActiveVideoReady(!shouldPlayVideo)
+    if (!shouldPlayVideo) clearVideoTimers()
+  }, [activeVideo, currentVideoSrc, shouldPlayVideo, clearVideoTimers])
+
   return (
-    <header className="life-hero">
+    <header className={`life-hero life-hero-${mediaPolicy} ${activeVideoReady ? 'is-media-ready' : 'is-media-loading'}`}>
       <div className="life-video-stage" aria-hidden="true">
-        <video
-          key={currentVideo.src}
-          className="life-hero-video life-video-active"
-          src={currentVideo.src}
-          autoPlay
-          muted
-          playsInline
-          preload="auto"
-          onLoadedMetadata={handleActiveLoadedMetadata}
-          onEnded={beginVideoTransition}
-          onError={beginVideoTransition}
-        />
-        {nextVideo && (
-          <video key={nextVideo.src} className="life-hero-video life-video-incoming" src={nextVideo.src} autoPlay muted playsInline preload="auto" />
+        {shouldPlayVideo && currentVideoSrc && (
+          <video
+            key={`${currentVideo.id}-${currentVideoSrc}`}
+            className="life-hero-video life-video-active"
+            src={currentVideoSrc}
+            autoPlay
+            muted
+            playsInline
+            preload="metadata"
+            onCanPlay={() => setActiveVideoReady(true)}
+            onLoadedMetadata={handleActiveLoadedMetadata}
+            onEnded={beginVideoTransition}
+            onError={beginVideoTransition}
+          />
+        )}
+        {nextVideo && nextVideoSrc && (
+          <video
+            key={`${nextVideo.id}-${nextVideoSrc}`}
+            className="life-hero-video life-video-incoming"
+            src={nextVideoSrc}
+            autoPlay
+            muted
+            playsInline
+            preload="metadata"
+          />
+        )}
+        {prewarmVideo && prewarmVideoSrc && (
+          <video
+            key={`prewarm-${prewarmVideo.id}-${prewarmVideoSrc}`}
+            className="life-video-preloader"
+            src={prewarmVideoSrc}
+            muted
+            playsInline
+            preload="metadata"
+          />
         )}
       </div>
       <div className="life-hero-shade" />
@@ -381,8 +513,9 @@ function LifeHero({
             <span>Life horizon · {stats.monthName}</span>
             <span>{currentVideo.label}</span>
             <span>
-              {String(activeVideo + 1).padStart(2, '0')} / {String(LIFE_VIDEOS.length).padStart(2, '0')}
+              {String(activeVideo + 1).padStart(2, '0')} / {String(LIFE_HERO_MEDIA.length).padStart(2, '0')}
             </span>
+            {mediaPolicy !== 'cinematic' && <span>轻量加载</span>}
           </div>
           <h1 className="life-title display">人生不是账本。</h1>
           <p>
@@ -438,16 +571,9 @@ function StateFlow({ stats, hasEntries }: { stats: DashboardStats; hasEntries: b
       </div>
 
       <div className="naked-chart">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={stats.trend} margin={{ top: 18, right: 18, bottom: 0, left: 0 }}>
-            <CartesianGrid strokeDasharray="1 10" vertical={false} />
-            <XAxis dataKey="month" tickLine={false} axisLine={false} />
-            <YAxis tickLine={false} axisLine={false} width={58} />
-            <Tooltip formatter={(v) => `¥ ${formatMoney(Number(v))}`} />
-            <Line type="monotone" dataKey="支出" stroke="var(--coral)" strokeWidth={3} dot={false} />
-            <Line type="monotone" dataKey="收入" stroke="var(--jade)" strokeWidth={3} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+        <Suspense fallback={<div className="chart-skeleton" aria-hidden="true" />}>
+          <StateTrendChart data={stats.trend} />
+        </Suspense>
       </div>
 
       <div className="state-columns">
@@ -596,12 +722,14 @@ function ImportFlow({ ledgerId, llmReady }: { ledgerId: number | null; llmReady:
   async function processPdf(file: File, password?: string) {
     setStatus({ kind: 'working', msg: '正在解析 PDF…' })
     try {
+      const { bocPdfToCsv } = await import('../lib/pdf')
       const csv = await bocPdfToCsv(file, password)
       setPendingPdf(null)
       setPdfPwd('')
       setPdfWrong(false)
       await runImport(csv, 'boc')
     } catch (e) {
+      const { PdfPasswordError } = await import('../lib/pdf')
       if (e instanceof PdfPasswordError) {
         setPendingPdf(file)
         setPdfWrong(e.wrong)
@@ -944,7 +1072,8 @@ function LedgerWorkbench({
     setSelected(new Set())
   }
 
-  function doExport() {
+  async function doExport() {
+    const { exportTransactionsToExcel } = await import('../lib/export')
     exportTransactionsToExcel(filtered, tags, ledger?.name ?? '账本')
   }
 

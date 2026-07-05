@@ -1,15 +1,16 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, ensureSeed } from './db/db'
 import { useApp } from './store/app'
 import Dashboard from './pages/Dashboard'
-import ImportPage from './pages/ImportPage'
-import Transactions from './pages/Transactions'
-import TagsPage from './pages/TagsPage'
-import Settings from './pages/Settings'
 import { BrandLockup } from './components/BrandMark'
 import { ThemedIcon, type ThemedIconName } from './components/ThemedIcon'
+
+const ImportPage = lazy(() => import('./pages/ImportPage'))
+const Transactions = lazy(() => import('./pages/Transactions'))
+const TagsPage = lazy(() => import('./pages/TagsPage'))
+const Settings = lazy(() => import('./pages/Settings'))
 
 const PRIMARY_NAV: { to: string; label: string; end: boolean; icon: ThemedIconName; hint: string }[] = [
   { to: '/', label: '概览', end: true, icon: 'overview', hint: '月度潮位' },
@@ -144,13 +145,15 @@ export default function App() {
 
         <main className="min-w-0 px-4 py-5 sm:px-6 lg:px-10 lg:py-9">
           <div className="mx-auto max-w-[1440px]">
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/import" element={<ImportPage />} />
-              <Route path="/transactions" element={<Transactions />} />
-              <Route path="/tags" element={<TagsPage />} />
-              <Route path="/settings" element={<Settings />} />
-            </Routes>
+            <Suspense fallback={<div className="grid min-h-[50vh] place-items-center text-[var(--muted)]">加载中…</div>}>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/import" element={<ImportPage />} />
+                <Route path="/transactions" element={<Transactions />} />
+                <Route path="/tags" element={<TagsPage />} />
+                <Route path="/settings" element={<Settings />} />
+              </Routes>
+            </Suspense>
           </div>
         </main>
       </div>
