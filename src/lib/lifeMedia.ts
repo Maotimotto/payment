@@ -17,6 +17,7 @@ export type LifeChapterMedia = LifeMediaAsset & {
   title: string
   copy: string
   align?: 'left' | 'right'
+  playlist?: LifeMediaAsset[]
 }
 
 type BrowserConnection = EventTarget & {
@@ -172,19 +173,6 @@ export const LIFE_HERO_MEDIA: LifeMediaAsset[] = [
   MEDIA.indonesiaVillageWater,
   MEDIA.mountainRoad,
   MEDIA.coastalCityDusk,
-  MEDIA.desertHorizon,
-  MEDIA.runningHorsesWide,
-  MEDIA.dayCity,
-  MEDIA.boatWater,
-  MEDIA.alpineRain,
-  MEDIA.indonesiaIslandWide,
-  MEDIA.tananaCityTop,
-  MEDIA.cityDusk,
-  MEDIA.wildCloud,
-  MEDIA.desertFire,
-  MEDIA.runningHorsesClose,
-  MEDIA.indonesiaBoat,
-  MEDIA.cadizNight,
 ]
 
 export const LIFE_CHAPTER_MEDIA: LifeChapterMedia[] = [
@@ -195,6 +183,7 @@ export const LIFE_CHAPTER_MEDIA: LifeChapterMedia[] = [
     eyebrow: 'Perspective first',
     title: '先把视线交给远方。',
     copy: '数据不是生活的边界。它只是提醒你：工作带来了什么，能量流向哪里，以及下一段路该不该轻一点。',
+    playlist: [MEDIA.wildCloud, MEDIA.indonesiaIslandWide, MEDIA.tananaCityTop],
   },
   {
     ...MEDIA.alpineRain,
@@ -204,23 +193,26 @@ export const LIFE_CHAPTER_MEDIA: LifeChapterMedia[] = [
     title: '状态需要安静地出现。',
     copy: '汐账把流水压低，把反馈放大。你不必盯着每一笔钱，只需要知道哪些变化值得被看见。',
     align: 'right',
+    playlist: [MEDIA.indonesiaBoat, MEDIA.boatWater, MEDIA.cadizNight],
   },
   {
-    ...MEDIA.boatWater,
+    ...MEDIA.wildCloud,
     id: 'chapter-records-return',
     label: 'Records return',
     eyebrow: 'Records return',
     title: '记录归流，注意力归你。',
     copy: '多源账单只是潮汐。它们进来、被归类、被校准，然后沉到背景里，不再占据你的整天。',
+    playlist: [MEDIA.wildCloud, MEDIA.alpineRain, MEDIA.cityDusk],
   },
   {
-    ...MEDIA.dayCity,
+    ...MEDIA.coastalCityDusk,
     id: 'chapter-low-point',
     label: 'Low point',
     eyebrow: 'Review once',
     title: '失衡处，只需要被看见一次。',
     copy: '重复、退款、未分类和异常支出被放进复核队列。处理它们，不是为了反复自责，而是为了重新获得方向。',
     align: 'right',
+    playlist: [MEDIA.coastalCityDusk, MEDIA.indonesiaIslandWide, MEDIA.desertHorizon],
   },
   {
     ...MEDIA.runningHorsesWide,
@@ -229,6 +221,7 @@ export const LIFE_CHAPTER_MEDIA: LifeChapterMedia[] = [
     eyebrow: 'Go on',
     title: '处理完，就继续向前。',
     copy: '账单的意义不是让你留下来，而是让你更清楚地离开。看见反馈，校准节奏，然后把人生过大一点。',
+    playlist: [MEDIA.runningHorsesWide, MEDIA.runningHorsesClose, MEDIA.tananaCityTop],
   },
   {
     ...MEDIA.cadizNight,
@@ -238,8 +231,13 @@ export const LIFE_CHAPTER_MEDIA: LifeChapterMedia[] = [
     title: '夜色落下时，账本也该合上。',
     copy: '控制区留在最后。因为真正重要的不是配置了多少能力，而是你能不能在知道状态之后，放心去生活。',
     align: 'right',
+    playlist: [MEDIA.desertFire, MEDIA.cadizNight, MEDIA.morningCoast],
   },
 ]
+
+export function getChapterVideoPlaylist(chapter: LifeChapterMedia): LifeMediaAsset[] {
+  return chapter.playlist?.length ? chapter.playlist : [chapter]
+}
 
 export function getBrowserConnection(): BrowserConnection | null {
   if (typeof navigator === 'undefined') return null

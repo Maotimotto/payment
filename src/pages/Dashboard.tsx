@@ -20,8 +20,8 @@ import {
   LIFE_CHAPTER_MEDIA,
   LIFE_HERO_MEDIA,
   getBrowserConnection,
+  getChapterVideoPlaylist,
   getMediaLoadingPolicy,
-  isVideoSourceRecentlyPlayed,
   markVideoSourcePlayed,
   resolveLifeVideoSource,
   shouldWarmNextAsset,
@@ -32,10 +32,15 @@ import type { Direction, DraftTransaction, Ledger, LLMConfig, Tag, Transaction }
 
 const StateTrendChart = lazy(() => import('../components/StateTrendChart'))
 
-const HERO_VIDEO_FADE_MS = 1400
-const HERO_VIDEO_MIN_MS = 1800
-const HERO_VIDEO_MAX_MS = 7600
-const HERO_VIDEO_PROMOTION_OFFSET_SECONDS = HERO_VIDEO_FADE_MS / 1000
+const VIDEO_PLAYBACK_RATE = 0.5
+const HERO_VIDEO_FADE_MS = 1800
+const HERO_VIDEO_MIN_MS = 5200
+const HERO_VIDEO_MAX_MS = 14000
+const HERO_VIDEO_PROMOTION_OFFSET_SECONDS = (HERO_VIDEO_FADE_MS / 1000) * VIDEO_PLAYBACK_RATE
+const SECTION_VIDEO_FADE_MS = 1800
+const SECTION_VIDEO_MIN_MS = 6200
+const SECTION_VIDEO_MAX_MS = 16000
+const SECTION_VIDEO_PROMOTION_OFFSET_SECONDS = (SECTION_VIDEO_FADE_MS / 1000) * VIDEO_PLAYBACK_RATE
 
 type Status = { kind: 'idle' | 'working' | 'done' | 'error'; msg: string }
 type ViewKey = 'current' | 'uncategorized' | 'excluded' | 'merged' | 'combo' | 'large' | 'all'
@@ -73,6 +78,11 @@ const STORY_NAV_ITEMS = [
 
 function scrollToStorySection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function setLifeVideoPlaybackRate(video: HTMLVideoElement) {
+  video.defaultPlaybackRate = VIDEO_PLAYBACK_RATE
+  video.playbackRate = VIDEO_PLAYBACK_RATE
 }
 
 function splitLeadSegments(value: string) {
@@ -374,23 +384,79 @@ function RevealSection({
   const ref = useRef<HTMLElement | null>(null)
   const startedRef = useRef(false)
   const [hydrated, setHydrated] = useState(false)
+  const [isInViewport, setIsInViewport] = useState(false)
+  const [activeVideo, setActiveVideo] = useState(0)
+  const [incomingVideo, setIncomingVideo] = useState<number | null>(null)
+  const [activeStartAt, setActiveStartAt] = useState(0)
   const [mediaPolicy, setMediaPolicy] = useState<MediaLoadingPolicy>(() => getMediaLoadingPolicy())
-  const videoSrc = hydrated ? resolveLifeVideoSource(chapter, mediaPolicy) : null
-  const shouldPlayVideo = Boolean(videoSrc) && mediaPolicy !== 'still'
-  const isRepeat = videoSrc ? isVideoSourceRecentlyPlayed(videoSrc) : false
-  const nextVideoSrc = hydrated && nextChapter && mediaPolicy !== 'still'
-    ? resolveLifeVideoSource(nextChapter, mediaPolicy)
+  const transitionTimer = useRef<number | null>(null)
+  const settleTimer = useRef<number | null>(null)
+  const transitioning = useRef(false)
+  const sectionVideos = useMemo(() => getChapterVideoPlaylist(chapter), [chapter])
+  const currentVideo = sectionVideos[activeVideo] ?? sectionVideos[0] ?? chapter
+  const nextVideo = incomingVideo == null ? null : sectionVideos[incomingVideo]
+  const currentVideoSrc = hydrated ? resolveLifeVideoSource(currentVideo, mediaPolicy) : null
+  const nextVideoSrc = nextVideo ? resolveLifeVideoSource(nextVideo, mediaPolicy) : null
+  const shouldRenderVideo = hydrated && Boolean(currentVideoSrc) && mediaPolicy !== 'still'
+  const shouldAdvanceVideo = shouldRenderVideo && isInViewport
+  const prewarmIndex = shouldRenderVideo && shouldWarmNextAsset(mediaPolicy) && sectionVideos.length > 1 && incomingVideo == null
+    ? (activeVideo + 1) % sectionVideos.length
+    : null
+  const prewarmVideo = prewarmIndex == null ? null : sectionVideos[prewarmIndex]
+  const prewarmVideoSrc = prewarmVideo ? resolveLifeVideoSource(prewarmVideo, mediaPolicy) : null
+  const nextChapterFirstVideo = nextChapter ? getChapterVideoPlaylist(nextChapter)[0] : null
+  const nextChapterVideoSrc = shouldRenderVideo && nextChapterFirstVideo
+    ? resolveLifeVideoSource(nextChapterFirstVideo, mediaPolicy)
     : null
 
   const handleVideoPlay = useCallback(() => {
-    if (videoSrc) markVideoSourcePlayed(videoSrc)
-  }, [videoSrc])
+    if (currentVideoSrc) markVideoSourcePlayed(currentVideoSrc)
+  }, [currentVideoSrc])
+
+  const clearSectionTimers = useCallback(() => {
+    if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
+    if (settleTimer.current != null) window.clearTimeout(settleTimer.current)
+    transitionTimer.current = null
+    settleTimer.current = null
+  }, [])
+
+  const beginSectionVideoTransition = useCallback(() => {
+    if (!shouldAdvanceVideo || sectionVideos.length < 2) return
+    if (transitioning.current) return
+    transitioning.current = true
+    if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
+    transitionTimer.current = null
+
+    const next = (activeVideo + 1) % sectionVideos.length
+    setIncomingVideo(next)
+    settleTimer.current = window.setTimeout(() => {
+      setActiveStartAt(SECTION_VIDEO_PROMOTION_OFFSET_SECONDS)
+      setActiveVideo(next)
+      setIncomingVideo(null)
+      settleTimer.current = null
+      transitioning.current = false
+    }, SECTION_VIDEO_FADE_MS)
+  }, [activeVideo, sectionVideos.length, shouldAdvanceVideo])
+
+  const scheduleSectionVideoAdvance = useCallback(
+    (video: HTMLVideoElement) => {
+      if (!shouldAdvanceVideo || sectionVideos.length < 2) return
+      if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
+      const durationMs = Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : SECTION_VIDEO_MAX_MS
+      const remainingMediaMs = Math.max(0, durationMs - video.currentTime * 1000)
+      const remainingWallMs = remainingMediaMs / VIDEO_PLAYBACK_RATE
+      const delay = Math.max(SECTION_VIDEO_MIN_MS, Math.min(remainingWallMs - SECTION_VIDEO_FADE_MS, SECTION_VIDEO_MAX_MS))
+      transitionTimer.current = window.setTimeout(beginSectionVideoTransition, delay)
+    },
+    [beginSectionVideoTransition, sectionVideos.length, shouldAdvanceVideo],
+  )
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const observer = new IntersectionObserver(
       ([entry]) => {
+        setIsInViewport(entry.isIntersecting)
         if (!entry.isIntersecting || startedRef.current) return
         startedRef.current = true
         setHydrated(true)
@@ -413,41 +479,89 @@ function RevealSection({
     }
   }, [])
 
+  useEffect(() => {
+    if (!shouldAdvanceVideo) {
+      clearSectionTimers()
+      transitioning.current = false
+      setIncomingVideo(null)
+    }
+  }, [clearSectionTimers, shouldAdvanceVideo])
+
+  useEffect(() => {
+    return () => {
+      clearSectionTimers()
+    }
+  }, [clearSectionTimers])
+
   const handleSectionLoadedMetadata = useCallback((event: SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget
-    if (!Number.isFinite(video.duration) || video.duration <= 1) return
-    video.currentTime = Math.min(HERO_VIDEO_PROMOTION_OFFSET_SECONDS, Math.max(0, video.duration - 0.2))
-  }, [])
+    setLifeVideoPlaybackRate(video)
+    if (activeStartAt > 0 && Number.isFinite(video.duration)) {
+      video.currentTime = Math.min(activeStartAt, Math.max(0, video.duration - 0.2))
+      setActiveStartAt(0)
+    }
+    scheduleSectionVideoAdvance(video)
+  }, [activeStartAt, scheduleSectionVideoAdvance])
 
   return (
     <section
       id={id}
       ref={ref}
-      className={`story-section story-section-cinematic story-section-${chapter.align ?? 'left'} story-section-${variant} ${hydrated ? 'is-live' : ''}`}
+      className={`story-section story-section-cinematic story-section-${chapter.align ?? 'left'} story-section-${variant} ${hydrated ? 'is-live' : ''} ${incomingVideo != null ? 'is-section-cutting' : ''}`}
     >
       <div className="story-section-media" aria-hidden="true">
-        {shouldPlayVideo && videoSrc && !isRepeat && (
+        {shouldRenderVideo && currentVideoSrc && (
           <video
-            key={`${chapter.id}-${videoSrc}`}
-            className="story-section-video"
-            src={videoSrc}
+            key={`${chapter.id}-${currentVideo.id}-${currentVideoSrc}`}
+            className="story-section-video story-section-video-active"
+            src={currentVideoSrc}
             autoPlay
-            loop
             muted
             playsInline
             preload="metadata"
             onLoadedMetadata={handleSectionLoadedMetadata}
-            onPlay={handleVideoPlay}
+            onPlay={(event) => {
+              setLifeVideoPlaybackRate(event.currentTarget)
+              handleVideoPlay()
+            }}
+            onEnded={beginSectionVideoTransition}
+            onError={beginSectionVideoTransition}
           />
         )}
-        {nextVideoSrc && (
+        {shouldRenderVideo && nextVideo && nextVideoSrc && (
           <video
-            key={`preload-${nextChapter!.id}-${nextVideoSrc}`}
-            className="life-video-preloader"
+            key={`${chapter.id}-incoming-${nextVideo.id}-${nextVideoSrc}`}
+            className="story-section-video story-section-video-incoming"
             src={nextVideoSrc}
+            autoPlay
             muted
             playsInline
-            preload="auto"
+            preload="metadata"
+            onLoadedMetadata={(event) => setLifeVideoPlaybackRate(event.currentTarget)}
+            onPlay={(event) => {
+              setLifeVideoPlaybackRate(event.currentTarget)
+              markVideoSourcePlayed(nextVideoSrc)
+            }}
+          />
+        )}
+        {prewarmVideo && prewarmVideoSrc && (
+          <video
+            key={`preload-${chapter.id}-${prewarmVideo.id}-${prewarmVideoSrc}`}
+            className="life-video-preloader"
+            src={prewarmVideoSrc}
+            muted
+            playsInline
+            preload="metadata"
+          />
+        )}
+        {nextChapterVideoSrc && (
+          <video
+            key={`preload-next-${nextChapter!.id}-${nextChapterVideoSrc}`}
+            className="life-video-preloader"
+            src={nextChapterVideoSrc}
+            muted
+            playsInline
+            preload="metadata"
           />
         )}
       </div>
@@ -714,8 +828,9 @@ function LifeHero({
       if (!shouldPlayVideo) return
       if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
       const durationMs = Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : HERO_VIDEO_MAX_MS
-      const remainingMs = Math.max(0, durationMs - video.currentTime * 1000)
-      const delay = Math.max(HERO_VIDEO_MIN_MS, Math.min(remainingMs - HERO_VIDEO_FADE_MS, HERO_VIDEO_MAX_MS))
+      const remainingMediaMs = Math.max(0, durationMs - video.currentTime * 1000)
+      const remainingWallMs = remainingMediaMs / VIDEO_PLAYBACK_RATE
+      const delay = Math.max(HERO_VIDEO_MIN_MS, Math.min(remainingWallMs - HERO_VIDEO_FADE_MS, HERO_VIDEO_MAX_MS))
       transitionTimer.current = window.setTimeout(beginVideoTransition, delay)
     },
     [beginVideoTransition, shouldPlayVideo],
@@ -724,6 +839,7 @@ function LifeHero({
   const handleActiveLoadedMetadata = useCallback(
     (event: SyntheticEvent<HTMLVideoElement>) => {
       const video = event.currentTarget
+      setLifeVideoPlaybackRate(video)
       if (activeStartAt > 0 && Number.isFinite(video.duration)) {
         video.currentTime = Math.min(activeStartAt, Math.max(0, video.duration - 0.2))
         setActiveStartAt(0)
@@ -772,7 +888,10 @@ function LifeHero({
             preload="metadata"
             onCanPlay={() => setActiveVideoReady(true)}
             onLoadedMetadata={handleActiveLoadedMetadata}
-            onPlay={() => markVideoSourcePlayed(currentVideoSrc)}
+            onPlay={(event) => {
+              setLifeVideoPlaybackRate(event.currentTarget)
+              markVideoSourcePlayed(currentVideoSrc)
+            }}
             onEnded={beginVideoTransition}
             onError={beginVideoTransition}
           />
@@ -786,6 +905,8 @@ function LifeHero({
             muted
             playsInline
             preload="metadata"
+            onLoadedMetadata={(event) => setLifeVideoPlaybackRate(event.currentTarget)}
+            onPlay={(event) => setLifeVideoPlaybackRate(event.currentTarget)}
           />
         )}
         {prewarmVideo && prewarmVideoSrc && (

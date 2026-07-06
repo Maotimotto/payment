@@ -630,14 +630,16 @@ button:disabled {
 
 .life-video-active {
   opacity: 1;
-  animation: hero-video-drift 18s var(--ease-out-quart) infinite alternate;
+  animation: hero-video-drift 32s var(--ease-out-quart) infinite alternate;
+  will-change: opacity, transform;
 }
 
 .life-video-incoming {
   opacity: 0;
   animation:
-    hero-cut-in 1450ms var(--ease-out-quint) forwards,
-    hero-video-drift 18s var(--ease-out-quart) infinite alternate;
+    video-crossfade-in 1800ms var(--ease-out-quint) forwards,
+    hero-video-drift 32s var(--ease-out-quart) infinite alternate;
+  will-change: opacity, transform;
 }
 
 .life-hero-shade {
@@ -661,15 +663,15 @@ button:disabled {
 }
 
 .life-hero.is-video-cutting::before {
-  animation: hero-cut-bar-top 1400ms var(--ease-out-quint) both;
+  opacity: 0.22;
 }
 
 .life-hero.is-video-cutting::after {
-  animation: hero-cut-bar-bottom 1400ms var(--ease-out-quint) both;
+  opacity: 0.22;
 }
 
 .life-hero.is-video-cutting .life-hero-shade::after {
-  animation: montage-blackout 1400ms var(--ease-out-quint) both;
+  opacity: 0;
 }
 
 .life-hero.is-video-cutting .life-hero-content {
@@ -678,14 +680,14 @@ button:disabled {
 
 .life-hero.is-video-cutting .life-video-active {
   animation:
-    montage-video-out 1400ms var(--ease-out-quint) both,
-    hero-video-drift 18s var(--ease-out-quart) infinite alternate;
+    video-crossfade-out 1800ms var(--ease-out-quint) both,
+    hero-video-drift 32s var(--ease-out-quart) infinite alternate;
 }
 
 .life-hero.is-video-cutting .life-video-incoming {
   animation:
-    hero-cut-in 1400ms var(--ease-out-quint) both,
-    hero-video-drift 18s var(--ease-out-quart) infinite alternate;
+    video-crossfade-in 1800ms var(--ease-out-quint) both,
+    hero-video-drift 32s var(--ease-out-quart) infinite alternate;
 }
 
 .life-hero-grain {
@@ -1199,6 +1201,7 @@ button:disabled {
   filter: saturate(1.02) contrast(1.08) brightness(0.92) blur(14px);
   transform: scale(1.09);
   opacity: 0;
+  will-change: opacity, transform;
   transition:
     opacity 760ms var(--ease-out-quint),
     filter 760ms var(--ease-out-quint),
@@ -1233,6 +1236,22 @@ button:disabled {
 
 .story-section-control.is-live .story-section-video {
   animation: section-video-close 26s linear forwards;
+}
+
+.story-section.is-live .story-section-video-incoming {
+  opacity: 0;
+}
+
+.story-section.is-section-cutting .story-section-video-active {
+  animation:
+    video-crossfade-out 1800ms var(--ease-out-quint) both,
+    section-video-steady 30s linear forwards;
+}
+
+.story-section.is-section-cutting .story-section-video-incoming {
+  animation:
+    video-crossfade-in 1800ms var(--ease-out-quint) both,
+    section-video-steady 30s linear forwards;
 }
 
 .story-section-shade {
@@ -2951,6 +2970,28 @@ button:disabled {
 @keyframes video-fade-in {
   to {
     opacity: 1;
+  }
+}
+
+@keyframes video-crossfade-in {
+  from {
+    opacity: 0;
+    transform: scale(1.045) translate3d(0.18%, -0.12%, 0);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.035) translate3d(0, 0, 0);
+  }
+}
+
+@keyframes video-crossfade-out {
+  from {
+    opacity: 1;
+    transform: scale(1.035) translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0.22;
+    transform: scale(1.052) translate3d(-0.18%, 0.12%, 0);
   }
 }
 
