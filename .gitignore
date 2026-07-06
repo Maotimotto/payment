@@ -2,7 +2,6 @@
 node_modules/
 dist/
 *.tsbuildinfo
-public/media/
 public/video/*.mov
 .DS_Store
 public/.DS_Store
