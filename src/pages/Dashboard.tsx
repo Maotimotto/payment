@@ -32,7 +32,7 @@ import type { Direction, DraftTransaction, Ledger, LLMConfig, Tag, Transaction }
 
 const StateTrendChart = lazy(() => import('../components/StateTrendChart'))
 
-const VIDEO_PLAYBACK_RATE = 0.5
+const VIDEO_PLAYBACK_RATE = 1
 const HERO_VIDEO_FADE_MS = 1800
 const HERO_VIDEO_MIN_MS = 5200
 const HERO_VIDEO_MAX_MS = 14000
