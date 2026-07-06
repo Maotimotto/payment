@@ -23,11 +23,44 @@ Vite + React + TypeScript + Tailwind CSS · IndexedDB（Dexie）· Zustand · Re
 
 ## 开发
 
+### 环境准备
+
+项目不提交 `node_modules/` 和 `dist/`，clone 后需要先安装依赖：
+
 ```bash
-npm install
-npm run dev      # 本地开发 http://localhost:5173
-npm run build    # 类型检查 + 生产构建
-npm run preview  # 预览构建产物
+git clone <repo-url>
+cd payment
+npm install       # 安装依赖，生成 node_modules/
+```
+
+### 启动开发服务
+
+```bash
+npm run dev       # 本地开发 http://localhost:5173
+```
+
+### 构建
+
+```bash
+npm run build     # 类型检查 + 生产构建，输出到 dist/
+npm run preview   # 预览构建产物
+```
+
+### 视频媒体
+
+`public/media/` 下的 mp4 文件（~333M）已纳入 Git 版本管理，clone 时自动下载。
+
+媒体相关脚本：
+
+```bash
+npm run media:serve      # 启动静态媒体服务（用于本地媒体文件托管）
+npm run media:transcode  # 重新转码媒体文件
+```
+
+如需将视频托管到 CDN 以减小仓库体积，设置环境变量：
+
+```bash
+VITE_LIFE_MEDIA_BASE=https://your-cdn.example.com/media
 ```
 
 ## 大模型配置
