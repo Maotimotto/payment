@@ -1,4 +1,4 @@
-import { db } from '../db/db'
+import { db, ensureSeed } from '../db/db'
 
 type Direction = 'income' | 'expense'
 type DedupStatus = 'none' | 'suspected' | 'merged' | 'ignored'
@@ -22,6 +22,8 @@ const PAYMENT_METHODS: Record<string, string[]> = {
   manual: ['现金', '其他'],
 }
 
+const DEMO_LEDGER_NAME = '演示账本'
+
 function rand(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
@@ -40,9 +42,14 @@ function pickWeighted<T>(items: T[], weights: number[]): T {
   return items[items.length - 1]
 }
 
+const DAY = 24 * 3600 * 1000
+const HOUR = 3600 * 1000
+
 export async function seedData() {
-  const ledgers = await db.ledgers.toArray()
-  const ledgerId = ledgers[0]?.id ?? (await db.ledgers.add({ name: '默认账本', currency: 'CNY', createdAt: Date.now() }))
+  await ensureSeed()
+
+  const existingDemoLedger = await db.ledgers.where('name').equals(DEMO_LEDGER_NAME).first()
+  const ledgerId = existingDemoLedger?.id ?? (await db.ledgers.add({ name: DEMO_LEDGER_NAME, currency: 'CNY', createdAt: Date.now() }))
 
   const allTags = await db.tags.toArray()
   const tagMap = new Map<string, number>()
@@ -50,12 +57,7 @@ export async function seedData() {
     if (t.id != null) tagMap.set(t.name, t.id)
   }
 
-  // 确认数据是否已存在
-  const existing = await db.transactions.where('ledgerId').equals(ledgerId).count()
-  if (existing > 0) {
-    if (!confirm(`账本已有 ${existing} 条数据，要清空重新生成吗？`)) return
-    await db.transactions.where('ledgerId').equals(ledgerId).delete()
-  }
+  await db.transactions.where('ledgerId').equals(ledgerId).delete()
 
   const transactions: Array<{
     ledgerId: number
@@ -107,7 +109,7 @@ export async function seedData() {
         comboGroupId: null,
         dedupStatus: 'none',
         dedupGroupId: null,
-        raw: `${merchant},-${rand(5, 2000)}`,
+        raw: `${merchant},消费`,
         createdAt: Date.now(),
       })
     }
@@ -139,7 +141,7 @@ export async function seedData() {
         comboGroupId: null,
         dedupStatus: 'none',
         dedupGroupId: null,
-        raw: `${merchant},+${rand(50, 35000)}`,
+        raw: `${merchant},收入`,
         createdAt: Date.now(),
       })
     }
@@ -190,14 +192,52 @@ export async function seedData() {
     }
   }
 
-  // --- 重复/疑似重复（近 2 月）---
+  // --- 本月状态锚点：保证首页当月有收入和可感知的成长投入 ---
+  const currentSalaryTagId = tagMap.get('工资') ?? tagMap.get('收入') ?? null
+  const currentEducationTagId = tagMap.get('教育') ?? null
+  transactions.push({
+    ledgerId,
+    amount: 26000,
+    direction: 'income',
+    occurredAt: now - 3 * DAY,
+    merchant: '本月工资',
+    source: 'cmb',
+    paymentMethod: '招商银行储蓄卡',
+    tagId: currentSalaryTagId,
+    note: '演示：本月工作回报',
+    countInStats: true,
+    comboGroupId: null,
+    dedupStatus: 'none',
+    dedupGroupId: null,
+    raw: '本月工资,+26000',
+    createdAt: Date.now(),
+  })
+  transactions.push({
+    ledgerId,
+    amount: 1299,
+    direction: 'expense',
+    occurredAt: now - 2 * DAY,
+    merchant: '年度课程订阅',
+    source: 'alipay',
+    paymentMethod: '支付宝余额',
+    tagId: currentEducationTagId,
+    note: '演示：成长投入',
+    countInStats: true,
+    comboGroupId: null,
+    dedupStatus: 'none',
+    dedupGroupId: null,
+    raw: '年度课程订阅,-1299',
+    createdAt: Date.now(),
+  })
+
+  // --- 重复/疑似重复：保持待检测状态，用于验证复核区合并/忽略功能 ---
+  const duplicateBaseTime = now - 4 * DAY + 9 * HOUR
   const dedupEntries = [
-    { merchant: '美团外卖', amount: 35.8, source: 'wechat', paymentMethod: '微信零钱' },
-    { merchant: '美团外卖', amount: 35.8, source: 'alipay', paymentMethod: '花呗' }, // 疑似重复
-    { merchant: '滴滴出行', amount: 24.5, source: 'wechat', paymentMethod: '微信零钱' },
-    { merchant: '滴滴出行', amount: 24.5, source: 'alipay', paymentMethod: '支付宝余额' }, // 疑似重复
+    { merchant: '美团外卖', amount: 35.8, source: 'wechat', paymentMethod: '微信零钱', occurredAt: duplicateBaseTime },
+    { merchant: '美团外卖', amount: 35.8, source: 'alipay', paymentMethod: '花呗', occurredAt: duplicateBaseTime + 6 * 1000 },
+    { merchant: '滴滴出行', amount: 24.5, source: 'wechat', paymentMethod: '微信零钱', occurredAt: duplicateBaseTime + 2 * HOUR },
+    { merchant: '滴滴出行', amount: 24.5, source: 'alipay', paymentMethod: '支付宝余额', occurredAt: duplicateBaseTime + 2 * HOUR + 5 * 1000 },
   ]
-  const dedupGroupId = `dup-${Date.now()}`
   for (let i = 0; i < dedupEntries.length; i++) {
     const e = dedupEntries[i]
     const tagId = tagMap.get(i < 2 ? '餐饮' : '交通') ?? null
@@ -205,20 +245,58 @@ export async function seedData() {
       ledgerId,
       amount: e.amount,
       direction: 'expense',
-      occurredAt: now - rand(1, 14) * 24 * 3600 * 1000,
+      occurredAt: e.occurredAt,
       merchant: e.merchant,
       source: e.source,
       paymentMethod: e.paymentMethod,
       tagId,
-      note: '',
+      note: '演示：跨来源重复候选',
       countInStats: true,
       comboGroupId: null,
-      dedupStatus: i % 2 === 1 ? 'suspected' : 'none',
-      dedupGroupId: i % 2 === 1 ? dedupGroupId : null,
+      dedupStatus: 'none',
+      dedupGroupId: null,
       raw: `${e.merchant},-${e.amount}`,
       createdAt: Date.now(),
     })
   }
+
+  // --- 退款抵消：点击“检测退款抵消”后应成对出现 ---
+  const refundTagId = tagMap.get('娱乐') ?? null
+  const refundTime = now - 8 * DAY + 20 * HOUR
+  transactions.push({
+    ledgerId,
+    amount: 268,
+    direction: 'expense',
+    occurredAt: refundTime,
+    merchant: '猫眼电影',
+    source: 'alipay',
+    paymentMethod: '支付宝余额',
+    tagId: refundTagId,
+    note: '演示：电影票消费',
+    countInStats: true,
+    comboGroupId: null,
+    dedupStatus: 'none',
+    dedupGroupId: null,
+    raw: '猫眼电影,-268',
+    createdAt: Date.now(),
+  })
+  transactions.push({
+    ledgerId,
+    amount: 268,
+    direction: 'income',
+    occurredAt: refundTime + 2 * DAY,
+    merchant: '猫眼电影退款',
+    source: 'alipay',
+    paymentMethod: '支付宝余额',
+    tagId: refundTagId,
+    note: '演示：原路退回',
+    countInStats: true,
+    comboGroupId: null,
+    dedupStatus: 'none',
+    dedupGroupId: null,
+    raw: '猫眼电影退款,+268',
+    createdAt: Date.now(),
+  })
 
   // --- 组合支付 ---
   const comboId = `combo-${Date.now()}`
@@ -317,8 +395,8 @@ export async function seedData() {
   }
 
   console.log(`✅ 已生成 ${total} 条假数据`, byMonth)
-  console.log('刷新页面即可看到效果。')
-  return { total, byMonth }
+  localStorage.setItem('payment-ledger', String(ledgerId))
+  return { ledgerId, total, byMonth }
 }
 
 // dev 模式下暴露到 window

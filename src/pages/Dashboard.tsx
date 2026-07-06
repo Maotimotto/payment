@@ -1722,6 +1722,7 @@ function ControlFlow({
   const [test, setTest] = useState<{ kind: 'idle' | 'testing' | 'ok' | 'fail'; msg: string }>({ kind: 'idle', msg: '' })
   const [saved, setSaved] = useState(false)
   const [ledgerName, setLedgerName] = useState('')
+  const [seedStatus, setSeedStatus] = useState<Status>({ kind: 'idle', msg: '' })
 
   useEffect(() => {
     setDraft(cfg)
@@ -1784,6 +1785,18 @@ function ControlFlow({
     location.reload()
   }
 
+  async function seedDemoLedger() {
+    setSeedStatus({ kind: 'working', msg: '正在生成演示账本…' })
+    try {
+      const { seedData } = await import('../lib/seed')
+      const result = await seedData()
+      setLedgerId(result.ledgerId)
+      setSeedStatus({ kind: 'done', msg: `已生成 ${result.total} 条演示流水，可切到复核和流水区验证。` })
+    } catch (e) {
+      setSeedStatus({ kind: 'error', msg: `生成失败：${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+
   return (
     <div className="control-flow">
       <div className="control-columns">
@@ -1842,8 +1855,14 @@ function ControlFlow({
         <div>
           <div className="eyebrow">Boundaries</div>
           <div className="control-stack">
+            {import.meta.env.DEV && (
+              <button onClick={seedDemoLedger} disabled={seedStatus.kind === 'working'} className="story-action">
+                {seedStatus.kind === 'working' ? '生成中…' : '生成演示数据'}
+              </button>
+            )}
             <button onClick={toggleTheme} className="story-action">{theme === 'dark' ? '切换浅色' : '切换深色'}</button>
             <button onClick={clearAll} className="story-action story-action-danger">清空全部本地数据</button>
+            {seedStatus.kind !== 'idle' && <div className={`inline-status inline-status-${seedStatus.kind}`}>{seedStatus.msg}</div>}
             <p className="privacy-copy">API Key 仅保存在当前浏览器 IndexedDB 中，不上传到服务器，也未加密。公共电脑上不要保存。</p>
           </div>
         </div>

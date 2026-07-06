@@ -28,6 +28,7 @@ export class PaymentDB extends Dexie {
 }
 
 export const db = new PaymentDB()
+let ensureSeedPromise: Promise<void> | null = null
 
 /** 预设标签（多级：一级 -> 子级）。special 用于资金搬运类的统计排除。 */
 const PRESET_TAGS: Array<{ name: string; special?: Tag['special']; children?: string[] }> = [
@@ -47,7 +48,14 @@ const PRESET_TAGS: Array<{ name: string; special?: Tag['special']; children?: st
 ]
 
 /** 首次启动时初始化默认账本与预设标签 */
-export async function ensureSeed(): Promise<void> {
+export function ensureSeed(): Promise<void> {
+  ensureSeedPromise ??= ensureSeedInternal().finally(() => {
+    ensureSeedPromise = null
+  })
+  return ensureSeedPromise
+}
+
+async function ensureSeedInternal(): Promise<void> {
   const ledgerCount = await db.ledgers.count()
   if (ledgerCount === 0) {
     await db.ledgers.add({
