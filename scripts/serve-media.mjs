@@ -1,11 +1,10 @@
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const home = process.env.HOME || ''
-const compatRoot = path.join(home, 'Desktop/video/browser-mp4')
-const rawRoot = path.join(home, 'Desktop/video/mp4格式')
-const defaultRoot = existsSync(compatRoot) ? compatRoot : rawRoot
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const defaultRoot = path.join(projectRoot, 'public', 'media')
 const rootArg = process.argv[2] || process.env.MEDIA_ROOT || defaultRoot
 const port = Number(process.argv[3] || 4174)
 const root = path.resolve(rootArg)
@@ -65,7 +64,4 @@ createServer((req, res) => {
 }).listen(port, '127.0.0.1', () => {
   console.log(`Media server: http://127.0.0.1:${port}`)
   console.log(`Serving: ${root}`)
-  if (root === rawRoot) {
-    console.log('Tip: run `npm run media:transcode` to create Chromium-compatible H.264 files in ~/Desktop/video/browser-mp4')
-  }
 })

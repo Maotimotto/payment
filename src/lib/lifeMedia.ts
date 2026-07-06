@@ -24,13 +24,11 @@ type BrowserConnection = EventTarget & {
   saveData?: boolean
 }
 
-const DEV_VIDEO_BASE = 'http://127.0.0.1:4174'
-
 const configuredVideoBase = (import.meta.env.VITE_LIFE_MEDIA_BASE as string | undefined)?.replace(/\/$/, '')
-const videoBase = configuredVideoBase || (import.meta.env.DEV ? DEV_VIDEO_BASE : '')
+const videoBase = configuredVideoBase || '/media'
 
 function rawVideo(name: string) {
-  return videoBase ? `${videoBase}/${encodeURIComponent(name)}` : undefined
+  return `${videoBase}/${encodeURIComponent(name)}`
 }
 
 function lifeAsset({
@@ -142,12 +140,6 @@ const MEDIA = {
     alt: '快艇在水面飞驰',
     localName: 'mp4--9.mp4',
   }),
-  shipwreckShore: lifeAsset({
-    id: 'shipwreck-shore',
-    label: 'Shore review',
-    alt: '海岸边的沉船与飞鸟',
-    localName: 'mp4--7.mp4',
-  }),
   runningHorsesWide: lifeAsset({
     id: 'running-horses-wide',
     label: 'Go on',
@@ -185,7 +177,6 @@ export const LIFE_HERO_MEDIA: LifeMediaAsset[] = [
   MEDIA.dayCity,
   MEDIA.boatWater,
   MEDIA.alpineRain,
-  MEDIA.shipwreckShore,
   MEDIA.indonesiaIslandWide,
   MEDIA.tananaCityTop,
   MEDIA.cityDusk,
@@ -223,7 +214,7 @@ export const LIFE_CHAPTER_MEDIA: LifeChapterMedia[] = [
     copy: '多源账单只是潮汐。它们进来、被归类、被校准，然后沉到背景里，不再占据你的整天。',
   },
   {
-    ...MEDIA.shipwreckShore,
+    ...MEDIA.dayCity,
     id: 'chapter-low-point',
     label: 'Low point',
     eyebrow: 'Review once',
@@ -282,4 +273,16 @@ export function resolveLifeVideoSource(asset: LifeMediaAsset, policy: MediaLoadi
 
 export function shouldWarmNextAsset(policy: MediaLoadingPolicy) {
   return policy === 'cinematic'
+}
+
+// --- playback dedup: prevent the same video from playing consecutively ---
+
+let lastPlayedVideoSrc: string | null = null
+
+export function markVideoSourcePlayed(src: string) {
+  lastPlayedVideoSrc = src
+}
+
+export function isVideoSourceRecentlyPlayed(src: string) {
+  return lastPlayedVideoSrc === src
 }

@@ -13,6 +13,8 @@
     "lint": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/manrope": "^5.2.8",
+    "@fontsource/zcool-xiaowei": "^5.2.8",
     "dexie": "^4.4.4",
     "dexie-react-hooks": "^4.4.0",
     "papaparse": "^5.5.4",
@@ -25,11 +27,11 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@tailwindcss/vite": "^4.3.1",
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@vitejs/plugin-react": "^6.0.3",
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",

@@ -21,6 +21,8 @@ import {
   LIFE_HERO_MEDIA,
   getBrowserConnection,
   getMediaLoadingPolicy,
+  isVideoSourceRecentlyPlayed,
+  markVideoSourcePlayed,
   resolveLifeVideoSource,
   shouldWarmNextAsset,
   type LifeChapterMedia,
@@ -54,24 +56,54 @@ type DashboardStats = {
   monthName: string
 }
 
+type SectionVariant = 'manifest' | 'route' | 'review' | 'bench' | 'taxonomy' | 'control'
+type SectionLead = {
+  label: string
+  value: string
+}
+
+const STORY_NAV_ITEMS = [
+  { id: 'state-flow', label: '状态' },
+  { id: 'import-flow', label: '导入' },
+  { id: 'review-flow', label: '复核' },
+  { id: 'ledger-flow', label: '流水' },
+  { id: 'tags-flow', label: '标签' },
+  { id: 'settings-flow', label: '控制' },
+] as const
+
+function scrollToStorySection(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function splitLeadSegments(value: string) {
+  return value
+    .split(/[／/、，,]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
 export default function Dashboard() {
   const { ledgerId, setLedgerId, theme, toggleTheme } = useApp()
+  const heroImportInputRef = useRef<HTMLInputElement | null>(null)
   const tags = useLiveQuery(() => db.tags.toArray(), [])
   const ledgers = useLiveQuery(() => db.ledgers.toArray(), [])
   const llmCfg = useLiveQuery(() => getLLMConfig(), [])
+  const activeLedgerId = ledgers
+    ? (ledgers.some((ledger) => ledger.id === ledgerId) ? ledgerId : ledgers[0]?.id ?? null)
+    : ledgerId
   const allTx = useLiveQuery(
     () =>
-      ledgerId != null
-        ? db.transactions.where('ledgerId').equals(ledgerId).toArray()
+      activeLedgerId != null
+        ? db.transactions.where('ledgerId').equals(activeLedgerId).toArray()
         : Promise.resolve([] as Transaction[]),
-    [ledgerId],
+    [activeLedgerId],
   )
 
   useEffect(() => {
-    if (ledgers && ledgers.length > 0 && (ledgerId == null || !ledgers.some((l) => l.id === ledgerId))) {
-      setLedgerId(ledgers[0].id!)
+    if (activeLedgerId != null && activeLedgerId !== ledgerId) {
+      setLedgerId(activeLedgerId)
     }
-  }, [ledgers, ledgerId, setLedgerId])
+  }, [activeLedgerId, ledgerId, setLedgerId])
 
   useEffect(() => {
     document.title = '汐账 · Dashboard'
@@ -146,25 +178,60 @@ export default function Dashboard() {
     }
   }, [allTx, tags])
 
-  if (!stats || !tags || !allTx || !ledgers || !llmCfg) {
+  const llmReady = !!llmCfg?.enabled && !!llmCfg?.apiKey
+  const importController = useImportController(activeLedgerId, llmReady)
+
+  const requestImportPicker = useCallback(() => {
+    heroImportInputRef.current?.click()
+    window.setTimeout(() => {
+      scrollToStorySection('import-flow')
+    }, 0)
+  }, [])
+
+  if (!stats || !tags || !allTx || !ledgers || ledgers.length === 0 || !llmCfg) {
     return <div className="grid min-h-screen place-items-center text-[var(--muted)]">加载中…</div>
   }
 
   const hasEntries = allTx.length > 0
   const queueCount = stats.uncategorized + stats.duplicateCandidates + stats.refundCandidates
-  const currentLedger = ledgers.find((l) => l.id === ledgerId) ?? ledgers[0]
-  const llmReady = !!llmCfg.enabled && !!llmCfg.apiKey
+  const currentLedger = ledgers.find((l) => l.id === activeLedgerId) ?? ledgers[0]
 
   return (
     <div className="immersive-dashboard">
-      <LifeHero stats={stats} hasEntries={hasEntries} queueCount={queueCount} />
+      <input
+        ref={heroImportInputRef}
+        type="file"
+        accept=".csv,text/csv,.pdf,application/pdf"
+        className="sr-only-file-input"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(e) => {
+          if (e.target.files?.[0]) importController.handleFile(e.target.files[0])
+          e.target.value = ''
+        }}
+      />
+
+      <LifeHero
+        stats={stats}
+        hasEntries={hasEntries}
+        queueCount={queueCount}
+        onRequestImport={requestImportPicker}
+      />
 
       <main id="dashboard" className="scroll-story">
         <RevealSection
           id="state-flow"
+          index="01"
+          variant="manifest"
           chapter={LIFE_CHAPTER_MEDIA[0]}
+          nextChapter={LIFE_CHAPTER_MEDIA[1]}
           eyebrow="State feedback"
-          title="先看状态，再处理账单。"
+          titleLines={['先看', '状态']}
+          note="Feedback before fixation"
+          lead={{
+            label: 'State brief',
+            value: '工作回报、能量消耗、待处理事项。先合成一眼能懂的当下，再决定要不要处理账单。',
+          }}
           copy="账单只负责把工作回报、能量消耗和待复盘事项摆到一条长视线里。你看见它，校准它，然后离开它。"
         >
           <StateFlow stats={stats} hasEntries={hasEntries} />
@@ -172,19 +239,39 @@ export default function Dashboard() {
 
         <RevealSection
           id="import-flow"
+          index="02"
+          variant="route"
           chapter={LIFE_CHAPTER_MEDIA[1]}
+          nextChapter={LIFE_CHAPTER_MEDIA[2]}
           eyebrow="Bring records in"
-          title="多源导入不离开这条视线。"
+          titleLines={['记录', '归流']}
+          note="Gather without breaking the mood"
+          lead={{
+            label: 'Source path',
+            value: '微信 / 支付宝 / 银行 / 截图 / 手动录入',
+          }}
           copy="微信、支付宝、银行 CSV/PDF、截图和手动录入都在这里。能用本地规则解决的就留在本地，需要大模型时再打开。"
         >
-          <ImportFlow ledgerId={ledgerId} llmReady={llmReady} />
+          <ImportFlow
+            ledgerId={activeLedgerId}
+            llmReady={llmReady}
+            controller={importController}
+          />
         </RevealSection>
 
         <RevealSection
           id="review-flow"
+          index="03"
+          variant="review"
           chapter={LIFE_CHAPTER_MEDIA[2]}
+          nextChapter={LIFE_CHAPTER_MEDIA[3]}
           eyebrow="Clean only what matters"
-          title="复核队列只出现真正影响判断的部分。"
+          titleLines={['只留', '关键处']}
+          note="Review once, then move on"
+          lead={{
+            label: 'Review desk',
+            value: '未分类、重复、退款、统计排除，只要会影响判断，就摆上台面。',
+          }}
           copy="未分类、疑似重复、退款抵消和不计统计项被放在同一个复核段落。处理完，就把注意力还给工作和生活。"
         >
           <ReviewFlow stats={stats} transactions={allTx} />
@@ -192,9 +279,17 @@ export default function Dashboard() {
 
         <RevealSection
           id="ledger-flow"
+          index="04"
+          variant="bench"
           chapter={LIFE_CHAPTER_MEDIA[3]}
+          nextChapter={LIFE_CHAPTER_MEDIA[4]}
           eyebrow="Ledger workbench"
-          title="流水校准留在首页里完成。"
+          titleLines={['校准', '流水']}
+          note="The tool lives inside the story"
+          lead={{
+            label: 'Workbench',
+            value: '筛选、改标签、导出、AI 辅助，放在同一张工作台上。',
+          }}
           copy="筛选、改标签、删除、导出、AI 打标签都在这里。它是工具，不再是另一个需要切换进去的旧页面。"
         >
           <LedgerWorkbench
@@ -207,9 +302,17 @@ export default function Dashboard() {
 
         <RevealSection
           id="tags-flow"
+          index="05"
+          variant="taxonomy"
           chapter={LIFE_CHAPTER_MEDIA[4]}
+          nextChapter={LIFE_CHAPTER_MEDIA[5]}
           eyebrow="Taxonomy"
-          title="标签口径也留在这条长页里。"
+          titleLines={['口径', '清楚']}
+          note="Taxonomy that stays useful"
+          lead={{
+            label: 'Category logic',
+            value: '标签不是越多越好。它只需要让真实状态浮出来。',
+          }}
           copy="统计口径只需要足够清楚，不需要过度精细。把转账、投资、还款这些资金搬运单独收好，避免它们掩盖真实状态。"
         >
           <TagFlow tags={tags} />
@@ -217,15 +320,22 @@ export default function Dashboard() {
 
         <RevealSection
           id="settings-flow"
+          index="06"
+          variant="control"
           chapter={LIFE_CHAPTER_MEDIA[5]}
           eyebrow="Local controls"
-          title="只打开你需要的能力。"
+          titleLines={['需要', '再开']}
+          note="Quiet by default, powerful on demand"
+          lead={{
+            label: 'Control room',
+            value: '默认安静，本地优先。真的需要能力时，再把开关点亮。',
+          }}
           copy="大模型、账本、主题和数据管理被收进最后一段。默认仍然是纯本地账本，敏感配置只保存在当前浏览器。"
         >
           <ControlFlow
             cfg={llmCfg}
             ledgers={ledgers}
-            ledgerId={ledgerId}
+            ledgerId={activeLedgerId}
             setLedgerId={setLedgerId}
             theme={theme}
             toggleTheme={toggleTheme}
@@ -238,34 +348,52 @@ export default function Dashboard() {
 
 function RevealSection({
   id,
+  index,
+  variant,
   chapter,
+  nextChapter,
   eyebrow,
-  title,
+  titleLines,
+  note,
+  lead,
   copy,
   children,
 }: {
   id: string
+  index: string
+  variant: SectionVariant
   chapter: LifeChapterMedia
+  nextChapter?: LifeChapterMedia
   eyebrow: string
-  title: string
+  titleLines: [string, string] | string[]
+  note: string
+  lead: SectionLead
   copy: string
   children: ReactNode
 }) {
   const ref = useRef<HTMLElement | null>(null)
-  const [visible, setVisible] = useState(false)
+  const startedRef = useRef(false)
   const [hydrated, setHydrated] = useState(false)
   const [mediaPolicy, setMediaPolicy] = useState<MediaLoadingPolicy>(() => getMediaLoadingPolicy())
   const videoSrc = hydrated ? resolveLifeVideoSource(chapter, mediaPolicy) : null
   const shouldPlayVideo = Boolean(videoSrc) && mediaPolicy !== 'still'
+  const isRepeat = videoSrc ? isVideoSourceRecentlyPlayed(videoSrc) : false
+  const nextVideoSrc = hydrated && nextChapter && mediaPolicy !== 'still'
+    ? resolveLifeVideoSource(nextChapter, mediaPolicy)
+    : null
+
+  const handleVideoPlay = useCallback(() => {
+    if (videoSrc) markVideoSourcePlayed(videoSrc)
+  }, [videoSrc])
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (!entry.isIntersecting) return
+        if (!entry.isIntersecting || startedRef.current) return
+        startedRef.current = true
         setHydrated(true)
-        window.requestAnimationFrame(() => setVisible(true))
       },
       { threshold: 0.08, rootMargin: '35% 0px -8% 0px' },
     )
@@ -295,33 +423,46 @@ function RevealSection({
     <section
       id={id}
       ref={ref}
-      className={`story-section story-section-cinematic story-section-${chapter.align ?? 'left'} ${visible ? 'is-visible' : ''} ${hydrated ? 'is-hydrated' : ''}`}
+      className={`story-section story-section-cinematic story-section-${chapter.align ?? 'left'} story-section-${variant} ${hydrated ? 'is-live' : ''}`}
     >
       <div className="story-section-media" aria-hidden="true">
-        {shouldPlayVideo && videoSrc && (
+        {shouldPlayVideo && videoSrc && !isRepeat && (
           <video
             key={`${chapter.id}-${videoSrc}`}
             className="story-section-video"
             src={videoSrc}
             autoPlay
+            loop
             muted
             playsInline
-            preload="none"
+            preload="metadata"
             onLoadedMetadata={handleSectionLoadedMetadata}
-            onEnded={(event) => event.currentTarget.pause()}
+            onPlay={handleVideoPlay}
+          />
+        )}
+        {nextVideoSrc && (
+          <video
+            key={`preload-${nextChapter!.id}-${nextVideoSrc}`}
+            className="life-video-preloader"
+            src={nextVideoSrc}
+            muted
+            playsInline
+            preload="auto"
           />
         )}
       </div>
       <div className="story-section-shade" />
       <div className="story-section-grid">
-        <div className="story-copy">
-          <div className="story-section-meta">
-            <span>{chapter.label}</span>
-            <span>{eyebrow}</span>
-          </div>
-          <h2 className="display">{title}</h2>
-          <p>{copy}</p>
-        </div>
+        <StoryCopy
+          index={index}
+          chapterLabel={chapter.label}
+          eyebrow={eyebrow}
+          titleLines={titleLines}
+          note={note}
+          lead={lead}
+          copy={copy}
+          variant={variant}
+        />
         <div className="story-body">
           {hydrated ? children : <div className="story-placeholder" aria-hidden="true" />}
         </div>
@@ -330,14 +471,191 @@ function RevealSection({
   )
 }
 
+function StoryCopy({
+  index,
+  chapterLabel,
+  eyebrow,
+  titleLines,
+  note,
+  lead,
+  copy,
+  variant,
+}: {
+  index: string
+  chapterLabel: string
+  eyebrow: string
+  titleLines: string[]
+  note: string
+  lead: SectionLead
+  copy: string
+  variant: SectionVariant
+}) {
+  const leadParts = splitLeadSegments(lead.value)
+  const shortLeadParts = leadParts.slice(0, 4)
+  const titleText = titleLines.join('')
+  const title = (
+    <h2 className="display">
+      {titleLines.map((line) => (
+        <span key={line}>{line}</span>
+      ))}
+    </h2>
+  )
+  const meta = (
+    <div className="story-section-meta">
+      <span>{index}</span>
+      <span>{chapterLabel}</span>
+      <span>{eyebrow}</span>
+    </div>
+  )
+
+  if (variant === 'manifest') {
+    return (
+      <div className="story-copy story-copy-manifest">
+        {meta}
+        <div className="manifest-board">
+          <span className="manifest-index" aria-hidden="true">{index}</span>
+          <div className="manifest-title">
+            <span className="manifest-note">{note}</span>
+            {title}
+          </div>
+        </div>
+        <p className="manifest-lead">{lead.value}</p>
+        <p className="story-copy-main">{copy}</p>
+      </div>
+    )
+  }
+
+  if (variant === 'route') {
+    return (
+      <div className="story-copy story-copy-route">
+        <div className="route-rail" aria-hidden="true">
+          <span>{index}</span>
+          <span>Flow</span>
+        </div>
+        <div className="route-copy-panel">
+          {meta}
+          {title}
+          <div className="route-map">
+            {(leadParts.length > 0 ? leadParts : [lead.value]).map((part, partIndex, array) => (
+              <div key={`${part}-${partIndex}`} className="route-stop">
+                <span>{String(partIndex + 1).padStart(2, '0')}</span>
+                <strong>{part}</strong>
+                {partIndex < array.length - 1 && <i aria-hidden="true" />}
+              </div>
+            ))}
+          </div>
+          <p className="story-copy-main">{copy}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (variant === 'review') {
+    return (
+      <div className="story-copy story-copy-review">
+        <div className="review-slate">
+          <span>Review / {index}</span>
+          <span>{note}</span>
+        </div>
+        <div className="review-title-row">
+          {title}
+          <span className="review-scene-no" aria-hidden="true">{index}</span>
+        </div>
+        <div className="review-flags">
+          {shortLeadParts.map((part) => (
+            <span key={part}>{part}</span>
+          ))}
+        </div>
+        <p className="review-mainline">{lead.value}</p>
+        <p className="story-copy-main">{copy}</p>
+      </div>
+    )
+  }
+
+  if (variant === 'bench') {
+    return (
+      <div className="story-copy story-copy-bench">
+        {meta}
+        <div className="bench-title-row">
+          <div className="bench-title-stack">
+            <span className="bench-note">{note}</span>
+            {title}
+          </div>
+          <span className="bench-code">{index}</span>
+        </div>
+        <div className="bench-command-line">
+          {shortLeadParts.map((part, partIndex) => (
+            <span key={part}>
+              {part}
+              {partIndex < shortLeadParts.length - 1 && <i aria-hidden="true" />}
+            </span>
+          ))}
+        </div>
+        <div className="bench-brief">
+          <span>{lead.label}</span>
+          <p>{lead.value}</p>
+        </div>
+        <p className="story-copy-main">{copy}</p>
+      </div>
+    )
+  }
+
+  if (variant === 'taxonomy') {
+    return (
+      <div className="story-copy story-copy-taxonomy">
+        <div className="taxonomy-label">
+          <span>{index}</span>
+          <span>{lead.label}</span>
+        </div>
+        <div className="taxonomy-entry">
+          <div className="taxonomy-term">
+            {title}
+            <span className="taxonomy-term-roman">{eyebrow}</span>
+          </div>
+          <div className="taxonomy-definition">
+            <span>定义</span>
+            <p>{lead.value}</p>
+          </div>
+        </div>
+        <p className="story-copy-main">{copy}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="story-copy story-copy-control">
+      <div className="control-title-top">
+        <span>{note}</span>
+        <span>{index}</span>
+      </div>
+      <div className="control-header">
+        <span className="control-caption">{chapterLabel}</span>
+        {title}
+      </div>
+      <div className="control-lead">
+        <span>{lead.label}</span>
+        <p>{lead.value}</p>
+      </div>
+      <div className="control-switchwords">
+        {(leadParts.length > 0 ? leadParts : [titleText]).slice(0, 3).map((part) => (
+          <span key={part}>{part}</span>
+        ))}
+      </div>
+      <p className="story-copy-main">{copy}</p>
+    </div>
+  )
+}
+
 function LifeHero({
   stats,
   hasEntries,
   queueCount,
+  onRequestImport,
 }: {
   stats: DashboardStats
   hasEntries: boolean
   queueCount: number
+  onRequestImport: () => void
 }) {
   const balanceLabel = hasEntries ? `¥ ${formatMoney(stats.balance)}` : '等待第一段反馈'
   const nextStep = !hasEntries
@@ -363,6 +681,8 @@ function LifeHero({
     : null
   const prewarmVideo = prewarmIndex == null || incomingVideo != null ? null : LIFE_HERO_MEDIA[prewarmIndex]
   const prewarmVideoSrc = prewarmVideo ? resolveLifeVideoSource(prewarmVideo, mediaPolicy) : null
+  const displayedScene = incomingVideo == null ? activeVideo + 1 : incomingVideo + 1
+  const displayedSceneLabel = String(displayedScene).padStart(2, '0')
 
   const clearVideoTimers = useCallback(() => {
     if (transitionTimer.current != null) window.clearTimeout(transitionTimer.current)
@@ -432,12 +752,14 @@ function LifeHero({
   }, [])
 
   useEffect(() => {
-    setActiveVideoReady(!shouldPlayVideo)
-    if (!shouldPlayVideo) clearVideoTimers()
-  }, [activeVideo, currentVideoSrc, shouldPlayVideo, clearVideoTimers])
+    if (!shouldPlayVideo) {
+      setActiveVideoReady(true)
+      clearVideoTimers()
+    }
+  }, [shouldPlayVideo, clearVideoTimers])
 
   return (
-    <header className={`life-hero life-hero-${mediaPolicy} ${activeVideoReady ? 'is-media-ready' : 'is-media-loading'}`}>
+    <header className={`life-hero life-hero-${mediaPolicy} ${activeVideoReady ? 'is-media-ready' : 'is-media-loading'} ${incomingVideo != null ? 'is-video-cutting' : ''}`}>
       <div className="life-video-stage" aria-hidden="true">
         {shouldPlayVideo && currentVideoSrc && (
           <video
@@ -450,6 +772,7 @@ function LifeHero({
             preload="metadata"
             onCanPlay={() => setActiveVideoReady(true)}
             onLoadedMetadata={handleActiveLoadedMetadata}
+            onPlay={() => markVideoSourcePlayed(currentVideoSrc)}
             onEnded={beginVideoTransition}
             onError={beginVideoTransition}
           />
@@ -478,16 +801,20 @@ function LifeHero({
       </div>
       <div className="life-hero-shade" />
       <div className="life-hero-grain" />
+      <div className="life-cut-overlay" aria-hidden="true">
+        <span>{incomingVideo != null ? 'Cut to' : 'Now showing'}</span>
+        <strong>{incomingVideo != null && nextVideo ? nextVideo.label : currentVideo.label}</strong>
+        <span>{displayedSceneLabel} / {String(LIFE_HERO_MEDIA.length).padStart(2, '0')}</span>
+      </div>
 
       <nav className="life-hero-topbar" aria-label="首页导航">
         <BrandLockup compact className="brand-lockup-on-video" />
         <div className="life-hero-nav">
-          <a href="#state-flow">状态</a>
-          <a href="#import-flow">导入</a>
-          <a href="#review-flow">复核</a>
-          <a href="#ledger-flow">流水</a>
-          <a href="#tags-flow">标签</a>
-          <a href="#settings-flow">控制</a>
+          {STORY_NAV_ITEMS.map((item) => (
+            <button key={item.id} type="button" onClick={() => scrollToStorySection(item.id)}>
+              {item.label}
+            </button>
+          ))}
         </div>
       </nav>
 
@@ -501,18 +828,23 @@ function LifeHero({
             </span>
             {mediaPolicy !== 'cinematic' && <span>轻量加载</span>}
           </div>
-          <h1 className="life-title display">人生不是账本。</h1>
+          <div className="life-kicker">Bills are feedback, not the theme.</div>
+          <h1 className="life-title display">
+            <span>看见状态，</span>
+            <span>继续向前。</span>
+          </h1>
+          <div className="life-title-note display">账单只是回声，不是人生的主题。</div>
           <p>
             账单只是回声。汐账把工作回报、能量消耗和少量待复盘事项放进同一片视野，让你确认状态、看见方向，然后继续把人生过大一点。
           </p>
           <div className="mt-7 flex flex-wrap gap-3">
-            <a href="#import-flow" className="btn btn-primary">
-              {hasEntries ? '补充记录' : '开始导入'}
+            <button type="button" onClick={onRequestImport} className="btn btn-primary">
+              {hasEntries ? '补充账单' : '选择账单'}
               <span aria-hidden="true">→</span>
-            </a>
-            <a href="#ledger-flow" className="btn btn-on-video">
+            </button>
+            <button type="button" onClick={() => scrollToStorySection('ledger-flow')} className="btn btn-on-video">
               流水校准
-            </a>
+            </button>
           </div>
         </div>
 
@@ -536,10 +868,10 @@ function LifeHero({
         </aside>
       </div>
 
-      <a className="scroll-cue" href="#state-flow" aria-label="向下展开功能">
+      <button type="button" className="scroll-cue" onClick={() => scrollToStorySection('state-flow')} aria-label="向下展开功能">
         <span>向下展开功能</span>
         <span aria-hidden="true">↓</span>
-      </a>
+      </button>
     </header>
   )
 }
@@ -632,14 +964,14 @@ function LargeSignals({ items }: { items: Transaction[] }) {
   )
 }
 
-function ImportFlow({ ledgerId, llmReady }: { ledgerId: number | null; llmReady: boolean }) {
+function useImportController(ledgerId: number | null, llmReady: boolean) {
   const [status, setStatus] = useState<Status>({ kind: 'idle', msg: '' })
   const [source, setSource] = useState<'auto' | BuiltinPlatform>('auto')
   const [pendingPdf, setPendingPdf] = useState<File | null>(null)
   const [pdfPwd, setPdfPwd] = useState('')
   const [pdfWrong, setPdfWrong] = useState(false)
 
-  async function afterIngest(count: number) {
+  const afterIngest = useCallback(async (count: number) => {
     if (ledgerId == null) return
     const all = await db.transactions
       .where('ledgerId')
@@ -656,9 +988,9 @@ function ImportFlow({ ledgerId, llmReady }: { ledgerId: number | null; llmReady:
       kind: 'done',
       msg: `已导入 ${count} 笔${extra.length > 0 ? `，检测到 ${extra.join('、')}` : '，暂未发现需要立刻处理的队列'}`,
     })
-  }
+  }, [ledgerId])
 
-  async function runImport(text: string, forced?: BuiltinPlatform) {
+  const runImport = useCallback(async (text: string, forced?: BuiltinPlatform) => {
     if (ledgerId == null) return
     const builtin = parseBuiltin(text, forced)
     let drafts: DraftTransaction[]
@@ -691,9 +1023,9 @@ function ImportFlow({ ledgerId, llmReady }: { ledgerId: number | null; llmReady:
       onProgress: (p) => setStatus({ kind: 'working', msg: `${p.stage} ${p.done}/${p.total}` }),
     })
     await afterIngest(count)
-  }
+  }, [afterIngest, ledgerId, llmReady])
 
-  async function handleCsv(file: File) {
+  const handleCsv = useCallback(async (file: File) => {
     setStatus({ kind: 'working', msg: '正在解析 CSV…' })
     try {
       const text = await readFileSmart(file)
@@ -701,9 +1033,9 @@ function ImportFlow({ ledgerId, llmReady }: { ledgerId: number | null; llmReady:
     } catch (e) {
       setStatus({ kind: 'error', msg: `解析失败：${e instanceof Error ? e.message : String(e)}` })
     }
-  }
+  }, [runImport, source])
 
-  async function processPdf(file: File, password?: string) {
+  const processPdf = useCallback(async (file: File, password?: string) => {
     setStatus({ kind: 'working', msg: '正在解析 PDF…' })
     try {
       const { bocPdfToCsv } = await import('../lib/pdf')
@@ -722,9 +1054,9 @@ function ImportFlow({ ledgerId, llmReady }: { ledgerId: number | null; llmReady:
       }
       setStatus({ kind: 'error', msg: `解析失败：${e instanceof Error ? e.message : String(e)}` })
     }
-  }
+  }, [runImport])
 
-  async function handleImage(file: File) {
+  const handleImage = useCallback(async (file: File) => {
     if (ledgerId == null || !llmReady) return
     setStatus({ kind: 'working', msg: '正在用大模型识别截图…' })
     try {
@@ -739,19 +1071,55 @@ function ImportFlow({ ledgerId, llmReady }: { ledgerId: number | null; llmReady:
     } catch (e) {
       setStatus({ kind: 'error', msg: `识别失败：${e instanceof Error ? e.message : String(e)}` })
     }
-  }
+  }, [afterIngest, ledgerId, llmReady])
 
-  function handleFile(file: File) {
+  const handleFile = useCallback((file: File) => {
     if (/\.pdf$/i.test(file.name)) processPdf(file)
     else handleCsv(file)
+  }, [handleCsv, processPdf])
+
+  const cancelPendingPdf = useCallback(() => {
+    setPendingPdf(null)
+    setPdfPwd('')
+    setPdfWrong(false)
+    setStatus({ kind: 'idle', msg: '' })
+  }, [])
+
+  return {
+    status,
+    source,
+    setSource,
+    pendingPdf,
+    pdfPwd,
+    setPdfPwd,
+    pdfWrong,
+    processPdf,
+    cancelPendingPdf,
+    handleFile,
+    handleImage,
+    afterIngest,
   }
+}
+
+type ImportController = ReturnType<typeof useImportController>
+
+function ImportFlow({
+  ledgerId,
+  llmReady,
+  controller,
+}: {
+  ledgerId: number | null
+  llmReady: boolean
+  controller: ImportController
+}) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   return (
     <div className="import-flow">
       <div className="flow-line">
         <label>
           <span>来源模板</span>
-          <select value={source} onChange={(e) => setSource(e.target.value as 'auto' | BuiltinPlatform)} className="story-input">
+          <select value={controller.source} onChange={(e) => controller.setSource(e.target.value as 'auto' | BuiltinPlatform)} className="story-input">
             <option value="auto">自动识别</option>
             <option value="wechat">{PLATFORM_LABELS.wechat}</option>
             <option value="alipay">{PLATFORM_LABELS.alipay}</option>
@@ -765,8 +1133,9 @@ function ImportFlow({ ledgerId, llmReady }: { ledgerId: number | null; llmReady:
             type="file"
             accept=".csv,text/csv,.pdf,application/pdf"
             className="hidden"
+            ref={fileInputRef}
             onChange={(e) => {
-              if (e.target.files?.[0]) handleFile(e.target.files[0])
+              if (e.target.files?.[0]) controller.handleFile(e.target.files[0])
               e.target.value = ''
             }}
           />
@@ -779,34 +1148,34 @@ function ImportFlow({ ledgerId, llmReady }: { ledgerId: number | null; llmReady:
             disabled={!llmReady}
             className="hidden"
             onChange={(e) => {
-              if (e.target.files?.[0]) handleImage(e.target.files[0])
+              if (e.target.files?.[0]) controller.handleImage(e.target.files[0])
               e.target.value = ''
             }}
           />
         </label>
       </div>
 
-      {pendingPdf && (
+      {controller.pendingPdf && (
         <div className="inline-notice">
-          <strong>「{pendingPdf.name}」已加密</strong>
+          <strong>「{controller.pendingPdf.name}」已加密</strong>
           <input
             type="password"
             autoFocus
-            value={pdfPwd}
-            onChange={(e) => setPdfPwd(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && pdfPwd && processPdf(pendingPdf, pdfPwd)}
+            value={controller.pdfPwd}
+            onChange={(e) => controller.setPdfPwd(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && controller.pdfPwd && controller.processPdf(controller.pendingPdf!, controller.pdfPwd)}
             placeholder="账单密码"
             className="story-input"
           />
-          <button onClick={() => pdfPwd && processPdf(pendingPdf, pdfPwd)} className="story-action">解锁</button>
-          <button onClick={() => setPendingPdf(null)} className="story-action story-action-muted">取消</button>
-          {pdfWrong && <span className="amount-expense">密码错误，请重试。</span>}
+          <button onClick={() => controller.pdfPwd && controller.processPdf(controller.pendingPdf!, controller.pdfPwd)} className="story-action">解锁</button>
+          <button onClick={controller.cancelPendingPdf} className="story-action story-action-muted">取消</button>
+          {controller.pdfWrong && <span className="amount-expense">密码错误，请重试。</span>}
         </div>
       )}
 
-      {status.kind !== 'idle' && <div className={`inline-status inline-status-${status.kind}`}>{status.msg}</div>}
+      {controller.status.kind !== 'idle' && <div className={`inline-status inline-status-${controller.status.kind}`}>{controller.status.msg}</div>}
 
-      <ManualEntryInline ledgerId={ledgerId} onDone={afterIngest} />
+      <ManualEntryInline ledgerId={ledgerId} onDone={controller.afterIngest} />
     </div>
   )
 }
@@ -896,7 +1265,7 @@ function ReviewFlow({ stats, transactions }: { stats: DashboardStats; transactio
 
       <div className="review-actions">
         <button onClick={() => setRefundPairs(detectRefundOffsets(transactions))} className="story-action">检测退款抵消</button>
-        <a href="#ledger-flow" className="story-action story-action-muted">进入流水校准</a>
+        <button type="button" onClick={() => scrollToStorySection('ledger-flow')} className="story-action story-action-muted">进入流水校准</button>
       </div>
 
       <div className="review-columns">

@@ -1,10 +1,13 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
-const home = process.env.HOME || ''
-const sourceRoot = path.resolve(process.argv[2] || process.env.MEDIA_SOURCE || path.join(home, 'Desktop/video/mp4格式'))
-const outputRoot = path.resolve(process.argv[3] || process.env.MEDIA_OUTPUT || path.join(home, 'Desktop/video/browser-mp4'))
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const defaultSource = path.join(projectRoot, 'public', 'media')
+const defaultOutput = path.join(projectRoot, 'public', 'media')
+const sourceRoot = path.resolve(process.argv[2] || process.env.MEDIA_SOURCE || defaultSource)
+const outputRoot = path.resolve(process.argv[3] || process.env.MEDIA_OUTPUT || defaultOutput)
 const force = process.argv.includes('--force') || process.env.MEDIA_FORCE === '1'
 
 async function resolveFfmpeg() {
